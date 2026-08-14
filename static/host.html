@@ -17,6 +17,27 @@
 <body>
     <main class="host">
 
+        <section class="screen" id="s-auth" hidden>
+            <p class="eyebrow">Shared screen · access</p>
+            <h1 class="title" id="a-title">Sign in</h1>
+            <p class="sub" id="a-sub">Only a signed-in host can run the shared screen.</p>
+
+            <div class="field">
+                <div class="label"><span>Email</span></div>
+                <input class="input" id="a-email" type="email" autocomplete="username" spellcheck="false"
+                    aria-label="Email">
+            </div>
+            <div class="field">
+                <div class="label"><span>Password</span></div>
+                <input class="input" id="a-password" type="password" autocomplete="current-password"
+                    aria-label="Password">
+            </div>
+
+            <button class="btn" id="a-signin">Sign in</button>
+            <button class="btn btn--quiet" id="a-signup">Create the host account</button>
+            <p class="note" id="a-note" role="status"></p>
+        </section>
+
         <section class="screen" id="s-blocked" hidden>
             <p class="eyebrow">Shared screen</p>
             <h1 class="title">Another screen is hosting</h1>
@@ -47,6 +68,22 @@
                     <h2>Controls</h2>
                     <div id="h-controls"></div>
                     <p class="note" id="h-note" role="status"></p>
+
+                    <details class="add-host">
+                        <summary>Add another host</summary>
+                        <div class="field">
+                            <div class="label"><span>Email</span></div>
+                            <input class="input" id="ah-email" type="email" autocomplete="off" spellcheck="false">
+                        </div>
+                        <div class="field">
+                            <div class="label"><span>Password</span></div>
+                            <input class="input" id="ah-password" type="password" autocomplete="new-password">
+                        </div>
+                        <button class="btn btn--quiet" id="ah-submit">Create account</button>
+                        <p class="note" id="ah-note" role="status"></p>
+                    </details>
+
+                    <button class="btn btn--quiet" id="a-signout">Sign out</button>
                 </div>
             </div>
         </section>

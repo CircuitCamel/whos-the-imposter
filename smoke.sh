@@ -12,7 +12,7 @@ bad()  { FAIL=$((FAIL+1)); echo "  FAIL  $1"; }
 check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (want '$3', got '$2')"; fi; }
 has()  { if grep -q "$2" <<<"$1"; then ok "$3"; else bad "$3 -- in: $1"; fi; }
 
-./bin/imposter -addr ":$PORT" -topics topics.csv -grace 2s > /tmp/imp/server.log 2>&1 &
+./bin/imposter -addr ":$PORT" -topics topics.csv -grace 2s -accounts /tmp/imp/accounts.json > /tmp/imp/server.log 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null; pkill -P $$ curl 2>/dev/null; exit' EXIT
 sleep 0.6
@@ -33,8 +33,16 @@ r=$(post h "/api/join" "{\"code\":\"$CODE\",\"name\":\"abcdefghijklmnopq\"}"); h
 r=$(post h "/api/join" "{\"code\":\"$CODE\",\"name\":\"abcdefghijklmnop\"}");  has "$r" "\"name\"" "16-char name accepted"
 r=$(post h2 "/api/join" "{\"code\":\"$CODE\",\"name\":\"ABCDEFGHIJKLMNOP\"}"); has "$r" "already has that name" "duplicate name rejected"
 
+echo; echo "-- host account"
+r=$(post host "/api/host/claim" '{}'); has "$r" "sign in required" "unsigned-in browser blocked from claiming"
+r=$(post host "/api/auth/signup" '{"email":"","password":"longenough"}'); has "$r" "valid email" "signup rejects a bad email"
+r=$(post host "/api/auth/signup" '{"email":"host@example.com","password":"short"}'); has "$r" "8 characters" "signup rejects a short password"
+r=$(post host "/api/auth/signup" '{"email":"host@example.com","password":"the-real-password"}'); has "$r" '"ok":true' "first signup bootstraps the host account"
+r=$(post nobody "/api/auth/signup" '{"email":"squatter@example.com","password":"longenough"}'); has "$r" "existing host" "signup closes itself after the first account"
+r=$(post host "/api/auth/signin" '{"email":"host@example.com","password":"wrong-password"}'); has "$r" "wrong email or password" "sign-in rejects a wrong password"
+
 echo; echo "-- host + players"
-r=$(post host "/api/host/claim" '{}'); has "$r" '"ok":true' "host claimed the screen"
+r=$(post host "/api/host/claim" '{}'); has "$r" '"ok":true' "signed-in host claimed the screen"
 sse host
 for i in 1 2 3; do
   post p$i "/api/join" "{\"code\":\"$CODE\",\"name\":\"P$i\"}" >/dev/null
@@ -46,7 +54,9 @@ n=$(python3 -c "import json,sys;print(len(json.loads(sys.argv[1])['players']))" 
 check "host sees all seated players" "$n" "4"
 
 echo; echo "-- non-host cannot drive the game"
-r=$(post p1 "/api/host/start" '{}'); has "$r" "only the host" "player blocked from starting"
+r=$(post p1 "/api/host/start" '{}'); has "$r" "sign in required" "unsigned-in player blocked from starting"
+r=$(post nobody "/api/auth/signin" '{"email":"host@example.com","password":"the-real-password"}'); has "$r" '"ok":true' "a second browser can sign in with the same account"
+r=$(post nobody "/api/host/start" '{}'); has "$r" "only the host" "signed-in but non-claiming browser still blocked from starting"
 
 echo; echo "-- deal a round"
 post host "/api/host/start" '{}' >/dev/null
@@ -169,6 +179,7 @@ check "code holds while the host screen is still up" \
 pkill -f "api/events" 2>/dev/null
 sleep 3.5
 rm -f /tmp/imp/host.sse
+post host2 "/api/auth/signin" '{"email":"host@example.com","password":"the-real-password"}' >/dev/null
 post host2 "/api/host/claim" '{}' >/dev/null
 sse host2; sleep 0.5
 NEW=$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['code'])" "$(last host2)")

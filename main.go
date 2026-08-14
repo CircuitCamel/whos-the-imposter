@@ -20,11 +20,19 @@ var staticFS embed.FS
 const (
 	cookiePlayer = "imp_pid"
 	cookieHost   = "imp_host"
+	cookieAuth   = "imp_auth"
 	cookieMaxAge = 12 * 60 * 60 // 12 hours - long enough for a game night
+
+	// The host login is meant to be a "sign in once" thing, not something
+	// that boots you mid-game-night - so its cookie is set to last for
+	// years rather than hours. There's no server-side expiry to match; a
+	// session is good until SignOut or a server restart clears it.
+	authCookieMaxAge = 10 * 365 * 24 * 60 * 60
 )
 
 type Server struct {
 	room *Room
+	auth *AuthStore
 }
 
 func main() {
@@ -42,6 +50,7 @@ func main() {
 		"public address players should use to join, e.g. party.example.com — overrides the LAN IP normally printed and put in the QR code")
 	minPlayers := flag.Int("min-players", envIntOr("IMPOSTER_MIN_PLAYERS", MinPlayers), "fewest connected players needed to deal a round")
 	maxPlayersFlag := flag.Int("max-players", envIntOr("IMPOSTER_MAX_PLAYERS", maxPlayers), "most players who can be seated in the room")
+	accountsPath := flag.String("accounts", envOr("IMPOSTER_ACCOUNTS", "accounts.json"), "path to the host accounts file")
 	flag.Parse()
 
 	if *minPlayers < 1 {
@@ -59,11 +68,16 @@ func main() {
 		log.Fatalf("could not load topics: %v", err)
 	}
 
+	auth, err := loadAuthStore(*accountsPath)
+	if err != nil {
+		log.Fatalf("could not load host accounts: %v", err)
+	}
+
 	joinURL := publicURL(*domain)
 	if joinURL == "" {
 		joinURL = fmt.Sprintf("http://%s:%s", lanIP(), portOf(*addr))
 	}
-	s := &Server{room: NewRoom(topics, joinURL)}
+	s := &Server{room: NewRoom(topics, joinURL), auth: auth}
 
 	// Sweep often enough that seats free up promptly once the grace period
 	// is up, without spinning on a room that nobody's in.
@@ -99,16 +113,20 @@ func main() {
 	mux.HandleFunc("POST /api/answered", s.handleAnswered)
 	mux.HandleFunc("POST /api/vote", s.handleVote)
 
-	mux.HandleFunc("POST /api/host/claim", s.handleHostClaim)
-	mux.HandleFunc("POST /api/host/start", s.hostOnly(s.handleHostStart))
-	mux.HandleFunc("POST /api/host/nextq", s.hostOnly(s.handleHostNextQuestion))
-	mux.HandleFunc("POST /api/host/discuss", s.hostOnly(s.handleHostDiscuss))
-	mux.HandleFunc("POST /api/host/voting", s.hostOnly(s.handleHostVoting))
-	mux.HandleFunc("POST /api/host/close", s.hostOnly(s.handleHostClose))
-	mux.HandleFunc("POST /api/host/lobby", s.hostOnly(s.handleHostLobby))
-	mux.HandleFunc("POST /api/host/kick", s.hostOnly(s.handleHostKick))
-	mux.HandleFunc("POST /api/host/end", s.hostOnly(s.handleHostEnd))
-	mux.HandleFunc("POST /api/host/newgame", s.hostOnly(s.handleHostNewGame))
+	mux.HandleFunc("POST /api/auth/signup", s.handleSignUp)
+	mux.HandleFunc("POST /api/auth/signin", s.handleSignIn)
+	mux.HandleFunc("POST /api/auth/signout", s.handleSignOut)
+
+	mux.HandleFunc("POST /api/host/claim", s.authOnly(s.handleHostClaim))
+	mux.HandleFunc("POST /api/host/start", s.authOnly(s.hostOnly(s.handleHostStart)))
+	mux.HandleFunc("POST /api/host/nextq", s.authOnly(s.hostOnly(s.handleHostNextQuestion)))
+	mux.HandleFunc("POST /api/host/discuss", s.authOnly(s.hostOnly(s.handleHostDiscuss)))
+	mux.HandleFunc("POST /api/host/voting", s.authOnly(s.hostOnly(s.handleHostVoting)))
+	mux.HandleFunc("POST /api/host/close", s.authOnly(s.hostOnly(s.handleHostClose)))
+	mux.HandleFunc("POST /api/host/lobby", s.authOnly(s.hostOnly(s.handleHostLobby)))
+	mux.HandleFunc("POST /api/host/kick", s.authOnly(s.hostOnly(s.handleHostKick)))
+	mux.HandleFunc("POST /api/host/end", s.authOnly(s.hostOnly(s.handleHostEnd)))
+	mux.HandleFunc("POST /api/host/newgame", s.authOnly(s.hostOnly(s.handleHostNewGame)))
 
 	srv := &http.Server{
 		Addr:         *addr,
@@ -224,6 +242,20 @@ func (s *Server) hostOnly(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// authOnly gates every host endpoint behind a signed-in account, ahead of
+// hostOnly's separate "are you the browser currently driving this room"
+// check. Someone without a valid session never gets far enough to even
+// attempt claiming the room.
+func (s *Server) authOnly(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.auth.IsSignedIn(cookieVal(r, cookieAuth)) {
+			writeErr(w, http.StatusUnauthorized, errors.New("sign in required"))
+			return
+		}
+		next(w, r)
+	}
+}
+
 // ---------- player endpoints ----------
 
 // handleMe lets a returning phone find out whether its cookie is still good,
@@ -302,6 +334,74 @@ func (s *Server) handleVote(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, err)
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// ---------- auth endpoints ----------
+
+func decodeAuthBody(r *http.Request) (email, password string, err error) {
+	var body struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		return "", "", errors.New("bad request")
+	}
+	return body.Email, body.Password, nil
+}
+
+// handleSignUp creates the first host account for free (there's no other
+// way in), then locks itself to signed-in callers only - otherwise anyone
+// who found this endpoint on a public domain could register themselves as
+// a host. A signed-in host can still use it to add e.g. a co-host.
+func (s *Server) handleSignUp(w http.ResponseWriter, r *http.Request) {
+	bootstrapping := s.auth.Empty()
+	if !bootstrapping && !s.auth.IsSignedIn(cookieVal(r, cookieAuth)) {
+		writeErr(w, http.StatusForbidden, ErrSignupsClosed)
+		return
+	}
+
+	email, password, err := decodeAuthBody(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.auth.SignUp(email, password); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+
+	// Only the very first sign-up doubles as a sign-in - an already signed-in
+	// host creating another account shouldn't have their own session swapped.
+	if bootstrapping {
+		token, err := s.auth.SignIn(email, password)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		setCookie(w, cookieAuth, token, authCookieMaxAge)
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request) {
+	email, password, err := decodeAuthBody(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	token, err := s.auth.SignIn(email, password)
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, err)
+		return
+	}
+	setCookie(w, cookieAuth, token, authCookieMaxAge)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request) {
+	s.auth.SignOut(cookieVal(r, cookieAuth))
+	setCookie(w, cookieAuth, "", -1)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

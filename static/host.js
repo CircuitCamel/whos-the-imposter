@@ -9,7 +9,11 @@ async function post(path, body) {
         body: JSON.stringify(body ?? {}),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || "Something went wrong");
+    if (!res.ok) {
+        const err = new Error(data.error || "Something went wrong");
+        err.status = res.status;
+        throw err;
+    }
     return data;
 }
 
@@ -291,12 +295,65 @@ function strong(text) {
     return b;
 }
 
+/* ── auth ───────────────────────────────────────────────────────────── */
+
+const authScreen = $("#s-auth");
+const authEmail = $("#a-email");
+const authPassword = $("#a-password");
+const authNote = $("#a-note");
+
+async function authAction(path) {
+    authNote.textContent = "";
+    try {
+        await post(path, { email: authEmail.value, password: authPassword.value });
+        authScreen.hidden = true;
+        boot();
+    } catch (err) {
+        authNote.textContent = err.message;
+    }
+}
+
+$("#a-signin").addEventListener("click", () => authAction("/api/auth/signin"));
+$("#a-signup").addEventListener("click", () => authAction("/api/auth/signup"));
+
+$("#a-signout").addEventListener("click", async () => {
+    if (stream) { stream.close(); stream = null; }
+    await post("/api/auth/signout").catch(() => { });
+    location.reload();
+});
+
+const addHostEmail = $("#ah-email");
+const addHostPassword = $("#ah-password");
+const addHostNote = $("#ah-note");
+
+$("#ah-submit").addEventListener("click", async () => {
+    addHostNote.textContent = "";
+    try {
+        await post("/api/auth/signup", { email: addHostEmail.value, password: addHostPassword.value });
+        addHostEmail.value = "";
+        addHostPassword.value = "";
+        addHostNote.textContent = "Account created - they can sign in on their own device now.";
+    } catch (err) {
+        addHostNote.textContent = err.message;
+    }
+});
+
 /* ── boot ───────────────────────────────────────────────────────────── */
 
-post("/api/host/claim")
-    .then(() => {
-        $("#s-main").hidden = false;
-        stream = new EventSource("/api/events");
-        stream.onmessage = (e) => render(JSON.parse(e.data));
-    })
-    .catch(() => { $("#s-blocked").hidden = false; });
+function boot() {
+    post("/api/host/claim")
+        .then(() => {
+            $("#s-main").hidden = false;
+            stream = new EventSource("/api/events");
+            stream.onmessage = (e) => render(JSON.parse(e.data));
+        })
+        .catch((err) => {
+            // 401 means the auth cookie is missing or invalid - everything
+            // else (someone else is already hosting) is the existing
+            // blocked screen, unrelated to sign-in.
+            if (err.status === 401) authScreen.hidden = false;
+            else $("#s-blocked").hidden = false;
+        });
+}
+
+boot();
