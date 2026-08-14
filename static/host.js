@@ -96,8 +96,13 @@ function render(s) {
         }
         case "results": {
             $("#h-phase").textContent = `Round ${s.round} - closed`;
-            $("#h-hint").textContent = "";
-            controls.append(button("Back to the lobby", "/api/host/lobby"));
+            $("#h-hint").textContent = seated < s.minPlayers
+                ? `${s.minPlayers} players needed to deal another round.`
+                : "";
+            const next = button("Deal the next round", "/api/host/start");
+            next.disabled = seated < s.minPlayers;
+            controls.append(next);
+            controls.append(button("Back to the lobby", "/api/host/lobby", "quiet"));
             controls.append(button("End the game", "/api/host/end", "danger"));
             if (s.results) renderResults(s.results);
             break;
