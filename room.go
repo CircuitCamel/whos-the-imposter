@@ -150,11 +150,12 @@ type playerView struct {
 }
 
 type youView struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	InRound  bool   `json:"inRound"`
-	SeenRole bool   `json:"seenRole"`
-	VotedFor string `json:"votedFor"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	InRound   bool   `json:"inRound"`
+	SeenRole  bool   `json:"seenRole"`
+	Dismissed bool   `json:"dismissed"`
+	VotedFor  string `json:"votedFor"`
 }
 
 type roleView struct {
@@ -900,11 +901,12 @@ func (r *Room) snapshotLocked(playerID string, isHost bool) snapshot {
 		return snap
 	}
 	snap.You = &youView{
-		ID:       p.ID,
-		Name:     p.Name,
-		InRound:  p.InRound,
-		SeenRole: p.SeenRole,
-		VotedFor: p.VotedFor,
+		ID:        p.ID,
+		Name:      p.Name,
+		InRound:   p.InRound,
+		SeenRole:  p.SeenRole,
+		Dismissed: p.Dismissed,
+		VotedFor:  p.VotedFor,
 	}
 	// The role only ever leaves the server for the one player it belongs to,
 	// and only once they've tapped to reveal it.

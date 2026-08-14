@@ -13,9 +13,12 @@ const screens = {
 
 let stream = null;
 let lastSnap = null;
-let cardRound = 0;      // which round the reveal card is currently showing
-let justTapped = false; // animate the flip only when the player opened it
-let dismissed = false;  // player has finished reading their file this round
+let cardRound = 0;         // which round the reveal card is currently showing
+let justTapped = false;    // animate the flip only when the player opened it
+let dismissed = false;     // put their file away this round - synced from the
+                            // server every render, never set independently, so
+                            // a page reload can't get stuck out of sync with it
+let peekingOwnFile = false; // local-only: re-viewing an already put-away file
 let peeking = false;
 
 function show(name) {
@@ -116,6 +119,12 @@ function render(s) {
     if (!s.you) { showJoin(); return; }
     lastSnap = s;
 
+    // The server is the only thing that decides whether you've put your
+    // file away - trusting a locally-toggled flag instead is what let a
+    // page reload get permanently stuck (it forgets the click ever
+    // happened, but the round had already moved on without it).
+    dismissed = s.you.dismissed;
+
     $("#l-code").textContent = s.code;
     $("#l-name").textContent = s.you.name;
     $("#r-for").textContent = s.you.name;
@@ -126,7 +135,7 @@ function render(s) {
     if (s.round !== cardRound) {  // new round - reseal the card
         cardRound = s.round;
         peeking = false;
-        dismissed = false;
+        peekingOwnFile = false;
         resetCard();
     }
 
@@ -196,9 +205,12 @@ function renderReveal(s) {
     const notReady = s.players.filter((p) => p.inRound && p.connected && !p.ready).length;
 
     // Every push while we're still on the reveal screen (someone else's
-    // file closing, a phase recheck) re-runs this - respect a prior "put
-    // away" instead of snapping the card back open underneath the player.
-    if (dismissed) {
+    // file closing, a phase recheck, a reconnect) re-runs this - respect a
+    // prior "put away" instead of snapping the card back open underneath
+    // the player. peekingOwnFile is the one local-only exception: tapping
+    // an already-put-away card to look again, which doesn't tell the
+    // server anything (it already knows you're done).
+    if (dismissed && !peekingOwnFile) {
         closeCard();
         $("#b-got").hidden = true;
         $("#r-status").textContent = notReady > 0
@@ -211,10 +223,15 @@ function renderReveal(s) {
     openCard(justTapped);
     justTapped = false;
     $("#b-got").hidden = false;
-    const othersLeft = notReady - 1; // notReady counts you too, since you haven't dismissed yet
-    $("#r-status").textContent = othersLeft > 0
-        ? `Waiting on ${othersLeft} more to put theirs away.`
-        : "Everyone else is done. Put yours away when you're ready.";
+
+    if (dismissed) {
+        $("#r-status").textContent = "Peeking at your own file again. Put it away when you're done.";
+    } else {
+        const othersLeft = notReady - 1; // notReady counts you too, since you haven't dismissed yet
+        $("#r-status").textContent = othersLeft > 0
+            ? `Waiting on ${othersLeft} more to put theirs away.`
+            : "Everyone else is done. Put yours away when you're ready.";
+    }
 }
 
 function renderQuestion(s) {
@@ -403,9 +420,9 @@ $("#r-card").addEventListener("click", () => {
     if ($("#r-card").classList.contains("is-open")) return;
     justTapped = true;
     if (dismissed) {
-        // Already revealed this round server-side — reopening locally is
-        // enough, no need to round-trip through /api/reveal again.
-        dismissed = false;
+        // Already told the server this round - peeking again is purely a
+        // local display flag, not something to re-report.
+        peekingOwnFile = true;
         if (lastSnap) render(lastSnap);
         return;
     }
@@ -413,14 +430,14 @@ $("#r-card").addEventListener("click", () => {
 });
 
 $("#b-got").addEventListener("click", () => {
-    dismissed = true;
-    if (lastSnap) render(lastSnap);
-    // The server needs to know too - it's what the rest of the room waits
-    // on before questioning can start. Revert if that didn't land.
-    post("/api/putaway").catch(() => {
-        dismissed = false;
+    if (dismissed) {
+        // Just closing a peek at an already-put-away file - the server
+        // already knows.
+        peekingOwnFile = false;
         if (lastSnap) render(lastSnap);
-    });
+        return;
+    }
+    post("/api/putaway").catch(() => { });
 });
 
 $("#b-answered").addEventListener("click", () => {
