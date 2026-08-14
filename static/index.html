@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#131c26">
+<title>Imposter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main class="wrap">
+
+  <!-- join ------------------------------------------------------------ -->
+  <section class="screen" id="s-join">
+    <p class="eyebrow">Case file · access</p>
+    <h1 class="title">Imposter</h1>
+    <p class="sub">Enter the code on the shared screen to take a seat.</p>
+
+    <div class="field">
+      <div class="label"><span>Room code</span></div>
+      <input class="input input--code" id="f-code" maxlength="4" autocomplete="off"
+             autocapitalize="characters" spellcheck="false" inputmode="text" aria-label="Room code">
+    </div>
+
+    <div class="field">
+      <div class="label"><span>Your name</span><span class="count" id="f-count">0/16</span></div>
+      <input class="input" id="f-name" maxlength="16" autocomplete="off" spellcheck="false"
+             placeholder="up to 16 characters" aria-label="Your name">
+    </div>
+
+    <button class="btn" id="b-join">Take a seat</button>
+    <p class="note" id="join-note" role="status"></p>
+  </section>
+
+  <!-- lobby ----------------------------------------------------------- -->
+  <section class="screen" id="s-lobby" hidden>
+    <p class="eyebrow">Seated · room <span id="l-code"></span></p>
+    <h1 class="title" id="l-name">—</h1>
+    <p class="sub" id="l-status">Waiting for the host to deal the files.</p>
+
+    <ul class="roster" id="l-roster"></ul>
+
+    <p style="margin-top:1.5rem"></p>
+    <button class="btn btn--quiet" id="b-leave">Leave the room</button>
+  </section>
+
+  <!-- reveal ---------------------------------------------------------- -->
+  <section class="screen" id="s-reveal" hidden>
+    <p class="eyebrow">Round <span id="r-round">1</span> · your file</p>
+
+    <button class="file" id="r-card" aria-live="polite">
+      <div class="file__inner">
+        <div class="file__face file__face--sealed">
+          <span class="seal">Sealed — for</span>
+          <span class="seal-name" id="r-for">—</span>
+          <span class="seal">Tap to open</span>
+        </div>
+        <div class="file__face file__face--open" id="r-open"></div>
+      </div>
+    </button>
+
+    <p class="sub" id="r-status">Nobody else can see this. Open it, then keep it to yourself.</p>
+    <button class="btn btn--quiet" id="b-got" hidden>Got it — put it away</button>
+  </section>
+
+  <!-- questioning ring ------------------------------------------------ -->
+  <section class="screen" id="s-question" hidden>
+    <p class="eyebrow">Round <span id="q-round">1</span> · question <span id="q-n">1</span> of <span id="q-total">3</span></p>
+    <div class="pips" id="q-pips" aria-hidden="true"></div>
+    <h1 class="title" id="q-title">—</h1>
+    <p class="sub" id="q-sub"></p>
+
+    <div class="turn">
+      <span class="turn__who turn__who--asks" id="q-asker">—</span>
+      <span class="turn__arrow" aria-hidden="true">asks</span>
+      <span class="turn__who turn__who--answers" id="q-target">—</span>
+    </div>
+
+    <p class="upnext" id="q-next"></p>
+
+    <button class="btn" id="b-answered" hidden>I've answered — my turn to ask</button>
+    <button class="btn btn--quiet" id="b-peek-q">Check my file</button>
+    <div id="q-slot" hidden>
+      <div class="file" style="cursor:default">
+        <div class="file__inner" style="transform:none">
+          <div class="file__face file__face--open" id="q-open" style="transform:none"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- discussion ------------------------------------------------------ -->
+  <section class="screen" id="s-discuss" hidden>
+    <p class="eyebrow">Round <span id="d-round">1</span> · in session</p>
+    <h1 class="title">Talk it out</h1>
+    <p class="sub">Ask questions. Give away nothing. The host opens voting when you're ready.</p>
+
+    <button class="btn btn--quiet" id="b-peek">Check my file</button>
+    <div id="d-slot" hidden>
+      <div class="file" style="cursor:default" aria-hidden="false">
+        <div class="file__inner" style="transform:none">
+          <div class="file__face file__face--open" id="d-open" style="transform:none"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- voting ---------------------------------------------------------- -->
+  <section class="screen" id="s-vote" hidden>
+    <p class="eyebrow">Round <span id="v-round">1</span> · accusation</p>
+    <h1 class="title">Who's the imposter?</h1>
+    <p class="sub" id="v-status">Pick one. You can change your mind until everyone's in.</p>
+    <div class="choices" id="v-choices"></div>
+  </section>
+
+  <!-- results --------------------------------------------------------- -->
+  <section class="screen" id="s-results" hidden>
+    <p class="eyebrow">Round <span id="x-round">1</span> · closed</p>
+    <div id="x-verdict"></div>
+    <p class="reveal-line">The topic was <b id="x-topic">—</b>.</p>
+    <p class="reveal-line">The imposter was <b id="x-imposter">—</b>, working from the hint <b id="x-hint">—</b>.</p>
+    <ul class="tally" id="x-tally"></ul>
+    <p class="sub" style="margin-top:1.5rem">Waiting for the host to deal the next round.</p>
+  </section>
+
+</main>
+<script src="/static/player.js"></script>
+</body>
+</html>
