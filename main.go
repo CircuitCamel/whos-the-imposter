@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -19,7 +20,7 @@ var staticFS embed.FS
 const (
 	cookiePlayer = "imp_pid"
 	cookieHost   = "imp_host"
-	cookieMaxAge = 12 * 60 * 60 // 12 hours — long enough for a game night
+	cookieMaxAge = 12 * 60 * 60 // 12 hours - long enough for a game night
 )
 
 type Server struct {
@@ -27,19 +28,41 @@ type Server struct {
 }
 
 func main() {
-	addr := flag.String("addr", ":8080", "address to listen on")
-	topicsPath := flag.String("topics", "topics.csv", "path to the topics CSV (topic,hint)")
-	grace := flag.Duration("grace", 90*time.Second, "how long a disconnected player keeps their seat")
+	loadDotenv(".env")
+
+	graceDefault, err := time.ParseDuration(envOr("IMPOSTER_GRACE", "90s"))
+	if err != nil {
+		log.Fatalf("IMPOSTER_GRACE: %v", err)
+	}
+
+	addr := flag.String("addr", ":"+envOr("IMPOSTER_PORT", "8080"), "address to listen on")
+	topicsPath := flag.String("topics", envOr("IMPOSTER_TOPICS", "topics.csv"), "path to the topics CSV (topic,hint)")
+	grace := flag.Duration("grace", graceDefault, "how long a disconnected player keeps their seat")
+	domain := flag.String("domain", envOr("IMPOSTER_DOMAIN", ""),
+		"public address players should use to join, e.g. party.example.com — overrides the LAN IP normally printed and put in the QR code")
+	minPlayers := flag.Int("min-players", envIntOr("IMPOSTER_MIN_PLAYERS", MinPlayers), "fewest connected players needed to deal a round")
+	maxPlayersFlag := flag.Int("max-players", envIntOr("IMPOSTER_MAX_PLAYERS", maxPlayers), "most players who can be seated in the room")
 	flag.Parse()
 
+	if *minPlayers < 1 {
+		log.Fatalf("-min-players must be at least 1, got %d", *minPlayers)
+	}
+	if *maxPlayersFlag < *minPlayers {
+		log.Fatalf("-max-players (%d) can't be less than -min-players (%d)", *maxPlayersFlag, *minPlayers)
+	}
 	graceTTL = *grace
+	MinPlayers = *minPlayers
+	maxPlayers = *maxPlayersFlag
 
 	topics, err := loadTopics(*topicsPath)
 	if err != nil {
 		log.Fatalf("could not load topics: %v", err)
 	}
 
-	joinURL := fmt.Sprintf("http://%s:%s", lanIP(), portOf(*addr))
+	joinURL := publicURL(*domain)
+	if joinURL == "" {
+		joinURL = fmt.Sprintf("http://%s:%s", lanIP(), portOf(*addr))
+	}
 	s := &Server{room: NewRoom(topics, joinURL)}
 
 	// Sweep often enough that seats free up promptly once the grace period
@@ -83,6 +106,8 @@ func main() {
 	mux.HandleFunc("POST /api/host/close", s.hostOnly(s.handleHostClose))
 	mux.HandleFunc("POST /api/host/lobby", s.hostOnly(s.handleHostLobby))
 	mux.HandleFunc("POST /api/host/kick", s.hostOnly(s.handleHostKick))
+	mux.HandleFunc("POST /api/host/end", s.hostOnly(s.handleHostEnd))
+	mux.HandleFunc("POST /api/host/newgame", s.hostOnly(s.handleHostNewGame))
 
 	srv := &http.Server{
 		Addr:         *addr,
@@ -94,6 +119,23 @@ func main() {
 
 	announce(joinURL, s.room.Code(), len(topics))
 	log.Fatal(srv.ListenAndServe())
+}
+
+// publicURL turns a bare domain (or a full URL) into the address printed at
+// startup and encoded in the host screen's QR code. A scheme-less value is
+// assumed to sit behind a reverse proxy terminating TLS, which is the usual
+// reason to set this in the first place, so it defaults to https. An empty
+// domain means "no override" — the caller falls back to the LAN IP.
+func publicURL(domain string) string {
+	domain = strings.TrimSpace(domain)
+	domain = strings.TrimSuffix(domain, "/")
+	if domain == "" {
+		return ""
+	}
+	if !strings.Contains(domain, "://") {
+		domain = "https://" + domain
+	}
+	return domain
 }
 
 func portOf(addr string) string {
@@ -311,6 +353,22 @@ func (s *Server) handleHostLobby(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (s *Server) handleHostEnd(w http.ResponseWriter, r *http.Request) {
+	if err := s.room.EndGame(); err != nil {
+		writeErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleHostNewGame(w http.ResponseWriter, r *http.Request) {
+	if err := s.room.NewGame(); err != nil {
+		writeErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (s *Server) handleHostKick(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ID string `json:"id"`
@@ -336,7 +394,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	pid := cookieVal(r, cookiePlayer)
 	if !isHost {
 		if _, ok := s.room.Lookup(pid); !ok {
-			// Cookie is stale or the player was reaped — the page will fall
+			// Cookie is stale or the player was reaped - the page will fall
 			// back to the join form.
 			writeErr(w, http.StatusUnauthorized, errors.New("not in this room"))
 			return

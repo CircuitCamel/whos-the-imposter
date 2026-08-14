@@ -8,6 +8,7 @@ const screens = {
     discuss: $("#s-discuss"),
     vote: $("#s-vote"),
     results: $("#s-results"),
+    gameover: $("#s-gameover"),
 };
 
 let stream = null;
@@ -38,7 +39,7 @@ const nameInput = $("#f-name");
 const codeInput = $("#f-code");
 const joinNote = $("#join-note");
 
-// A QR code from the host screen links here with the room code baked in —
+// A QR code from the host screen links here with the room code baked in -
 // fill it in and drop straight into the name field so scanning it is the
 // only step before typing a name.
 const params = new URLSearchParams(location.search);
@@ -122,14 +123,14 @@ function render(s) {
         $(id).textContent = s.round;
     }
 
-    if (s.round !== cardRound) {  // new round — reseal the card
+    if (s.round !== cardRound) {  // new round - reseal the card
         cardRound = s.round;
         peeking = false;
         dismissed = false;
         resetCard();
     }
 
-    // Everyone else finishing shouldn't snatch the file out of your hands —
+    // Everyone else finishing shouldn't snatch the file out of your hands -
     // stay on the card until you've put it away yourself.
     let phase = s.phase;
     if ((phase === "question" || phase === "discuss") &&
@@ -144,6 +145,7 @@ function render(s) {
         case "discuss": renderDiscuss(s); break;
         case "vote": renderVote(s); break;
         case "results": renderResults(s); break;
+        case "gameover": renderGameOver(s); break;
     }
 }
 
@@ -152,7 +154,7 @@ function renderLobby(s) {
     const seated = s.players.filter((p) => p.connected).length;
     $("#l-status").textContent = s.hostOnline
         ? (seated < s.minPlayers
-            ? `${seated} seated — ${s.minPlayers} needed to start.`
+            ? `${seated} seated - ${s.minPlayers} needed to start.`
             : "Waiting for the host to deal the files.")
         : "The shared screen isn't connected yet.";
 
@@ -178,7 +180,7 @@ function renderReveal(s) {
     show("reveal");
     if (!s.you.inRound) {
         $("#b-got").hidden = true;
-        $("#r-status").textContent = "You joined mid-round — you're in from the next one.";
+        $("#r-status").textContent = "You joined mid-round - you're in from the next one.";
         return;
     }
     if (!s.role) {
@@ -190,7 +192,7 @@ function renderReveal(s) {
     const left = s.players.filter((p) => p.inRound && p.connected && !p.ready).length;
 
     // Every push while we're still on the reveal screen (someone else opening
-    // their file, a phase recheck) re-runs this — respect a prior "put away"
+    // their file, a phase recheck) re-runs this - respect a prior "put away"
     // instead of snapping the card back open underneath the player.
     if (dismissed) {
         closeCard();
@@ -220,7 +222,7 @@ function renderQuestion(s) {
     $("#q-asker").textContent = a.asker;
     $("#q-target").textContent = a.target;
     $("#q-next").textContent = a.next
-        ? `Up next — ${a.target} asks ${a.next}`
+        ? `Up next - ${a.target} asks ${a.next}`
         : "Last question, then the floor opens.";
 
     $("#q-pips").replaceChildren(...Array.from({ length: a.total }, (_, i) => {
@@ -240,7 +242,7 @@ function renderQuestion(s) {
         ? `Ask ${a.target} one question, out loud. Something only someone who knows the topic could answer well.`
         : answering
             ? `Answer ${a.asker} out loud. Then it's your turn to ask.`
-            : "Listen closely — this is where people slip up.";
+            : "Listen closely - this is where people slip up.";
 
     $("#b-answered").hidden = !answering;
     if (s.role) paintOpenFace($("#q-open"), s.role);
@@ -260,7 +262,7 @@ function renderVote(s) {
     const me = s.you;
     $("#v-status").textContent = me.inRound
         ? "Pick one. You can change your mind until everyone's in."
-        : "You're sitting this round out — watch the accusations fly.";
+        : "You're sitting this round out - watch the accusations fly.";
 
     $("#v-choices").replaceChildren(...s.players.filter((p) => p.inRound).map((p) => {
         const b = document.createElement("button");
@@ -288,12 +290,12 @@ function renderResults(s) {
 
     const v = document.createElement("span");
     v.className = "verdict " + (r.caught ? "verdict--caught" : "verdict--escaped");
-    v.textContent = r.tie ? "Hung vote — imposter walks"
+    v.textContent = r.tie ? "Hung vote - imposter walks"
         : (r.caught ? "Imposter caught" : "Imposter walked free");
     $("#x-verdict").replaceChildren(v);
 
     $("#x-topic").textContent = r.topic;
-    $("#x-imposter").textContent = r.imposter || "—";
+    $("#x-imposter").textContent = r.imposter || "-";
     $("#x-hint").textContent = r.hint;
 
     $("#x-tally").replaceChildren(...r.tally.map((t) => {
@@ -304,6 +306,42 @@ function renderResults(s) {
         n.className = "n";
         n.textContent = t.votes === 1 ? "1 vote" : `${t.votes} votes`;
         li.append(nm, n);
+        return li;
+    }));
+
+    const me = s.you.id;
+    $("#x-board").replaceChildren(...(r.board || []).map((b, i) => {
+        const li = document.createElement("li");
+        const rank = document.createElement("span");
+        rank.className = "rank" + (i < 3 ? ` rank--${i + 1}` : "");
+        rank.textContent = i + 1;
+        const nm = document.createElement("span");
+        nm.className = "who";
+        nm.textContent = b.id === me ? `${b.name} (you)` : b.name;
+        const n = document.createElement("span");
+        n.className = "n";
+        n.textContent = b.score === 1 ? "1 pt" : `${b.score} pts`;
+        li.append(rank, nm, n);
+        return li;
+    }));
+}
+
+function renderGameOver(s) {
+    show("gameover");
+    const r = s.results;
+    const me = s.you.id;
+    $("#g-podium").replaceChildren(...(r?.board || []).slice(0, 3).map((b, i) => {
+        const li = document.createElement("li");
+        const place = document.createElement("span");
+        place.className = "place";
+        place.textContent = i + 1;
+        const nm = document.createElement("span");
+        nm.className = "who";
+        nm.textContent = b.id === me ? `${b.name} (you)` : b.name;
+        const n = document.createElement("span");
+        n.className = "n";
+        n.textContent = b.score === 1 ? "1 pt" : `${b.score} pts`;
+        li.append(place, nm, n);
         return li;
     }));
 }
@@ -326,7 +364,7 @@ function paintOpenFace(el, role) {
     } else {
         const kicker = document.createElement("div");
         kicker.className = "file__kicker";
-        kicker.textContent = "Topic — cleared";
+        kicker.textContent = "Topic - cleared";
         const word = document.createElement("p");
         word.className = "file__word";
         word.textContent = role.topic;
@@ -359,6 +397,13 @@ function resetCard() {
 $("#r-card").addEventListener("click", () => {
     if ($("#r-card").classList.contains("is-open")) return;
     justTapped = true;
+    if (dismissed) {
+        // Already revealed this round server-side — reopening locally is
+        // enough, no need to round-trip through /api/reveal again.
+        dismissed = false;
+        if (lastSnap) render(lastSnap);
+        return;
+    }
     post("/api/reveal").catch(() => { justTapped = false; });
 });
 
@@ -386,7 +431,7 @@ wirePeek("#b-peek-q");
 fetch("/api/me")
     .then((r) => r.json())
     .then((me) => {
-        if (me.joined) connect();  // cookie still good — straight back in
+        if (me.joined) connect();  // cookie still good - straight back in
         else showJoin();
     })
     .catch(() => showJoin());

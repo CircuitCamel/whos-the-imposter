@@ -42,7 +42,7 @@
         <!-- lobby ----------------------------------------------------------- -->
         <section class="screen" id="s-lobby" hidden>
             <p class="eyebrow">Seated · room <span id="l-code"></span></p>
-            <h1 class="title" id="l-name">—</h1>
+            <h1 class="title" id="l-name">-</h1>
             <p class="sub" id="l-status">Waiting for the host to deal the files.</p>
 
             <ul class="roster" id="l-roster"></ul>
@@ -58,8 +58,8 @@
             <button class="file" id="r-card" aria-live="polite">
                 <div class="file__inner">
                     <div class="file__face file__face--sealed">
-                        <span class="seal">Sealed — for</span>
-                        <span class="seal-name" id="r-for">—</span>
+                        <span class="seal">Sealed - for</span>
+                        <span class="seal-name" id="r-for">-</span>
                         <span class="seal">Tap to open</span>
                     </div>
                     <div class="file__face file__face--open" id="r-open"></div>
@@ -67,7 +67,7 @@
             </button>
 
             <p class="sub" id="r-status">Nobody else can see this. Open it, then keep it to yourself.</p>
-            <button class="btn btn--quiet" id="b-got" hidden>Got it — put it away</button>
+            <button class="btn btn--quiet" id="b-got" hidden>Got it - put it away</button>
         </section>
 
         <!-- questioning ring ------------------------------------------------ -->
@@ -75,18 +75,18 @@
             <p class="eyebrow">Round <span id="q-round">1</span> · question <span id="q-n">1</span> of <span
                     id="q-total">3</span></p>
             <div class="pips" id="q-pips" aria-hidden="true"></div>
-            <h1 class="title" id="q-title">—</h1>
+            <h1 class="title" id="q-title">-</h1>
             <p class="sub" id="q-sub"></p>
 
             <div class="turn">
-                <span class="turn__who turn__who--asks" id="q-asker">—</span>
+                <span class="turn__who turn__who--asks" id="q-asker">-</span>
                 <span class="turn__arrow" aria-hidden="true">asks</span>
-                <span class="turn__who turn__who--answers" id="q-target">—</span>
+                <span class="turn__who turn__who--answers" id="q-target">-</span>
             </div>
 
             <p class="upnext" id="q-next"></p>
 
-            <button class="btn" id="b-answered" hidden>I've answered — my turn to ask</button>
+            <button class="btn" id="b-answered" hidden>I've answered - my turn to ask</button>
             <button class="btn btn--quiet" id="b-peek-q">Check my file</button>
             <div id="q-slot" hidden>
                 <div class="file" style="cursor:default">
@@ -125,11 +125,20 @@
         <section class="screen" id="s-results" hidden>
             <p class="eyebrow">Round <span id="x-round">1</span> · closed</p>
             <div id="x-verdict"></div>
-            <p class="reveal-line">The topic was <b id="x-topic">—</b>.</p>
-            <p class="reveal-line">The imposter was <b id="x-imposter">—</b>, working from the hint <b
-                    id="x-hint">—</b>.</p>
+            <p class="reveal-line">The topic was <b id="x-topic">-</b>.</p>
+            <p class="reveal-line">The imposter was <b id="x-imposter">-</b>, working from the hint <b
+                    id="x-hint">-</b>.</p>
             <ul class="tally" id="x-tally"></ul>
+            <p class="eyebrow" style="margin-top:1.5rem">Leaderboard</p>
+            <ol class="board" id="x-board"></ol>
             <p class="sub" style="margin-top:1.5rem">Waiting for the host to deal the next round.</p>
+        </section>
+
+        <!-- game over --------------------------------------------------------- -->
+        <section class="screen" id="s-gameover" hidden>
+            <p class="eyebrow">Game over</p>
+            <h1 class="title">Final standings</h1>
+            <ol class="podium" id="g-podium"></ol>
         </section>
 
     </main>

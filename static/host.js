@@ -35,7 +35,7 @@ function render(s) {
     $("#h-code-corner-code").textContent = s.code;
 
     // The big code + QR only earn their space while people are still
-    // joining — once the round's under way, shrink to a corner reminder.
+    // joining - once the round's under way, shrink to a corner reminder.
     const inLobby = s.phase === "lobby";
     $("#h-hero").hidden = !inLobby;
     $("#h-code-corner").hidden = inLobby;
@@ -62,7 +62,7 @@ function render(s) {
             break;
         }
         case "reveal": {
-            $("#h-phase").textContent = `Round ${s.round} — opening files`;
+            $("#h-phase").textContent = `Round ${s.round} - opening files`;
             $("#h-hint").textContent = waiting > 0
                 ? `${waiting} still to open theirs.`
                 : "Everyone's looked.";
@@ -72,8 +72,8 @@ function render(s) {
         case "question": {
             const a = s.ask;
             $("#h-phase").textContent = a
-                ? `Round ${s.round} — question ${a.number} of ${a.total}`
-                : `Round ${s.round} — questions`;
+                ? `Round ${s.round} - question ${a.number} of ${a.total}`
+                : `Round ${s.round} - questions`;
             $("#h-hint").textContent = a
                 ? `${a.target} answers, then asks the next one.`
                 : "";
@@ -83,22 +83,30 @@ function render(s) {
             break;
         }
         case "discuss": {
-            $("#h-phase").textContent = `Round ${s.round} — discussion`;
+            $("#h-phase").textContent = `Round ${s.round} - discussion`;
             $("#h-hint").textContent = "Let them talk. Open voting when the room's ready.";
             controls.append(button("Open voting", "/api/host/voting"));
             break;
         }
         case "vote": {
-            $("#h-phase").textContent = `Round ${s.round} — voting`;
+            $("#h-phase").textContent = `Round ${s.round} - voting`;
             $("#h-hint").textContent = waiting > 0 ? `${waiting} still to vote.` : "All votes in.";
             controls.append(button("Close voting now", "/api/host/close", "danger"));
             break;
         }
         case "results": {
-            $("#h-phase").textContent = `Round ${s.round} — closed`;
+            $("#h-phase").textContent = `Round ${s.round} - closed`;
             $("#h-hint").textContent = "";
             controls.append(button("Back to the lobby", "/api/host/lobby"));
+            controls.append(button("End the game", "/api/host/end", "danger"));
             if (s.results) renderResults(s.results);
+            break;
+        }
+        case "gameover": {
+            $("#h-phase").textContent = "Game over";
+            $("#h-hint").textContent = "";
+            controls.append(button("New game", "/api/host/newgame"));
+            if (s.results) renderPodium(s.results.board);
             break;
         }
     }
@@ -125,7 +133,7 @@ function render(s) {
                             : "to ask";
         }
         else if (s.phase === "vote") tag.textContent = p.inRound ? (p.ready ? "voted" : "thinking") : "watching";
-        else if (!p.inRound && s.round > 0 && s.phase !== "lobby") tag.textContent = "next round";
+        else if (!p.inRound && s.round > 0 && s.phase !== "lobby" && s.phase !== "gameover") tag.textContent = "next round";
         li.append(tag);
 
         if (s.phase === "lobby") {
@@ -165,7 +173,7 @@ function renderAsk(a) {
     const next = document.createElement("p");
     next.className = "upnext";
     next.textContent = a.next
-        ? `Up next — ${a.target} asks ${a.next}`
+        ? `Up next - ${a.target} asks ${a.next}`
         : "Last question, then the floor opens.";
 
     $("#h-ask").replaceChildren(pips, turn, next);
@@ -176,7 +184,7 @@ function renderResults(r) {
 
     const v = document.createElement("span");
     v.className = "verdict " + (r.caught ? "verdict--caught" : "verdict--escaped");
-    v.textContent = r.tie ? "Hung vote — imposter walks"
+    v.textContent = r.tie ? "Hung vote - imposter walks"
         : (r.caught ? "Imposter caught" : "Imposter walked free");
 
     const topic = document.createElement("p");
@@ -185,7 +193,7 @@ function renderResults(r) {
 
     const imp = document.createElement("p");
     imp.className = "reveal-line";
-    imp.append("The imposter was ", strong(r.imposter || "—"), ", working from ", strong(r.hint), ".");
+    imp.append("The imposter was ", strong(r.imposter || "-"), ", working from ", strong(r.hint), ".");
 
     const tally = document.createElement("ul");
     tally.className = "tally";
@@ -200,7 +208,56 @@ function renderResults(r) {
         return li;
     }));
 
-    box.replaceChildren(v, topic, imp, tally);
+    const boardTitle = document.createElement("h2");
+    boardTitle.style.marginTop = "1.5rem";
+    boardTitle.textContent = "Leaderboard";
+
+    box.replaceChildren(v, topic, imp, tally, boardTitle, boardList(r.board));
+}
+
+function boardList(board) {
+    const ol = document.createElement("ol");
+    ol.className = "board";
+    ol.replaceChildren(...(board || []).map((b, i) => {
+        const li = document.createElement("li");
+        const rank = document.createElement("span");
+        rank.className = "rank" + (i < 3 ? ` rank--${i + 1}` : "");
+        rank.textContent = i + 1;
+        const nm = document.createElement("span");
+        nm.className = "who";
+        nm.textContent = b.name;
+        const n = document.createElement("span");
+        n.className = "n";
+        n.textContent = b.score === 1 ? "1 pt" : `${b.score} pts`;
+        li.append(rank, nm, n);
+        return li;
+    }));
+    return ol;
+}
+
+function renderPodium(board) {
+    const box = $("#h-results");
+    const title = document.createElement("h2");
+    title.textContent = "Final standings";
+
+    const ol = document.createElement("ol");
+    ol.className = "podium";
+    ol.replaceChildren(...(board || []).slice(0, 3).map((b, i) => {
+        const li = document.createElement("li");
+        const place = document.createElement("span");
+        place.className = "place";
+        place.textContent = i + 1;
+        const nm = document.createElement("span");
+        nm.className = "who";
+        nm.textContent = b.name;
+        const n = document.createElement("span");
+        n.className = "n";
+        n.textContent = b.score === 1 ? "1 pt" : `${b.score} pts`;
+        li.append(place, nm, n);
+        return li;
+    }));
+
+    box.replaceChildren(title, ol);
 }
 
 /* ── join QR ────────────────────────────────────────────────────────── */

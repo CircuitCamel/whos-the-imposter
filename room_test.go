@@ -189,3 +189,220 @@ func TestFourPlayersGetFourQuestions(t *testing.T) {
 		t.Fatalf("4 players should get 4 questions, got %d", count)
 	}
 }
+
+// imposterOf returns the current round's imposter, failing the test if
+// there isn't exactly one.
+func imposterOf(t *testing.T, r *Room) *Player {
+	t.Helper()
+	for _, p := range r.players {
+		if p.IsImposter {
+			return p
+		}
+	}
+	t.Fatal("no imposter assigned")
+	return nil
+}
+
+// advanceToVote pushes a freshly dealt round through reveal and questioning
+// (if any) into voting, without caring who says what.
+func advanceToVote(t *testing.T, r *Room) {
+	t.Helper()
+	for _, p := range r.players {
+		if err := r.MarkSeen(p.ID); err != nil {
+			t.Fatalf("mark seen: %v", err)
+		}
+	}
+	for r.phase == PhaseQuestion {
+		_, target, ok := r.currentAskLocked()
+		if !ok {
+			t.Fatal("ring stalled")
+		}
+		if err := r.AnswerQuestion(target.ID); err != nil {
+			t.Fatalf("answer: %v", err)
+		}
+	}
+	if err := r.OpenVoting(); err != nil {
+		t.Fatalf("open voting: %v", err)
+	}
+}
+
+// TestScoringCorrectVotersAndCaughtImposter covers a unanimous vote against
+// the real imposter: every innocent guessed right and should score, and the
+// imposter - having been caught - should not.
+func TestScoringCorrectVotersAndCaughtImposter(t *testing.T) {
+	r := NewRoom(topicsForTest(), "http://test")
+	seatPlayers(t, r, 4)
+	if err := r.StartRound(); err != nil {
+		t.Fatal(err)
+	}
+	imp := imposterOf(t, r)
+	advanceToVote(t, r)
+
+	var innocents []*Player
+	for _, p := range r.players {
+		if p.ID != imp.ID {
+			innocents = append(innocents, p)
+		}
+	}
+	for _, v := range innocents {
+		if err := r.Vote(v.ID, imp.ID); err != nil {
+			t.Fatalf("vote: %v", err)
+		}
+	}
+	// The imposter votes too, same as any other player at the table - just
+	// not for themselves.
+	if err := r.Vote(imp.ID, innocents[0].ID); err != nil {
+		t.Fatalf("imposter vote: %v", err)
+	}
+
+	if r.phase != PhaseResults {
+		t.Fatalf("expected results once everyone voted, got %s", r.phase)
+	}
+	if !r.results.Caught {
+		t.Fatal("a unanimous vote against the imposter should count as caught")
+	}
+	for _, v := range innocents {
+		if v.Score != 1 {
+			t.Errorf("%s correctly named the imposter, want score 1, got %d", v.Name, v.Score)
+		}
+	}
+	if imp.Score != 0 {
+		t.Errorf("a caught imposter should not score, got %d", imp.Score)
+	}
+}
+
+// TestScoringImposterEscapes covers a split vote where the imposter isn't
+// the accused: whoever still named them correctly scores, and the imposter
+// scores too for evading the group's verdict.
+func TestScoringImposterEscapes(t *testing.T) {
+	r := NewRoom(topicsForTest(), "http://test")
+	seatPlayers(t, r, 4)
+	if err := r.StartRound(); err != nil {
+		t.Fatal(err)
+	}
+	imp := imposterOf(t, r)
+	advanceToVote(t, r)
+
+	var innocents []*Player
+	for _, p := range r.players {
+		if p.ID != imp.ID {
+			innocents = append(innocents, p)
+		}
+	}
+	// innocents[0] correctly suspects the imposter; the other two pile onto
+	// a different innocent, so the imposter is never the accused.
+	if err := r.Vote(innocents[0].ID, imp.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Vote(innocents[1].ID, innocents[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Vote(innocents[2].ID, innocents[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	// The imposter votes too, piling onto the same decoy as the others.
+	if err := r.Vote(imp.ID, innocents[0].ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if r.phase != PhaseResults {
+		t.Fatalf("expected results once everyone voted, got %s", r.phase)
+	}
+	if r.results.Caught {
+		t.Fatal("the imposter wasn't the accused, so this should not count as caught")
+	}
+	if innocents[0].Score != 1 {
+		t.Errorf("innocents[0] correctly named the imposter, want score 1, got %d", innocents[0].Score)
+	}
+	if innocents[1].Score != 0 || innocents[2].Score != 0 {
+		t.Errorf("innocents 1 and 2 guessed wrong, want score 0, got %d and %d", innocents[1].Score, innocents[2].Score)
+	}
+	if imp.Score != 1 {
+		t.Errorf("the imposter evaded the vote, want score 1, got %d", imp.Score)
+	}
+}
+
+// TestBoardOrdersByScoreThenName checks the leaderboard sorts highest score
+// first, ties broken alphabetically so a repeated tally doesn't reshuffle.
+func TestBoardOrdersByScoreThenName(t *testing.T) {
+	r := NewRoom(topicsForTest(), "http://test")
+	ps := seatPlayers(t, r, 3) // P0, P1, P2
+	ps[0].Score = 1
+	ps[1].Score = 3
+	ps[2].Score = 3
+
+	board := r.boardLocked()
+	want := []string{"P1", "P2", "P0"} // tied at 3 sort alphabetically, then P0 at 1
+	if len(board) != len(want) {
+		t.Fatalf("expected %d entries, got %d", len(want), len(board))
+	}
+	for i, name := range want {
+		if board[i].Name != name {
+			t.Errorf("position %d: want %s, got %s", i, name, board[i].Name)
+		}
+	}
+}
+
+// TestEndGameAndNewGame covers the host's end-of-night flow: EndGame only
+// works from results, NewGame only works from game-over, the leaderboard
+// survives into the game-over screen, and a new game clears every score
+// without unseating anyone.
+func TestEndGameAndNewGame(t *testing.T) {
+	r := NewRoom(topicsForTest(), "http://test")
+	seatPlayers(t, r, 3)
+
+	if err := r.EndGame(); err != ErrWrongPhase {
+		t.Fatalf("EndGame from the lobby should fail with ErrWrongPhase, got %v", err)
+	}
+
+	if err := r.StartRound(); err != nil {
+		t.Fatal(err)
+	}
+	imp := imposterOf(t, r)
+	advanceToVote(t, r)
+	var decoy string
+	for _, p := range r.players {
+		if p.ID == imp.ID {
+			continue
+		}
+		if err := r.Vote(p.ID, imp.ID); err != nil {
+			t.Fatal(err)
+		}
+		decoy = p.ID
+	}
+	// The imposter votes too, same as everyone else at the table.
+	if err := r.Vote(imp.ID, decoy); err != nil {
+		t.Fatal(err)
+	}
+	if r.phase != PhaseResults {
+		t.Fatalf("expected results, got %s", r.phase)
+	}
+
+	if err := r.NewGame(); err != ErrWrongPhase {
+		t.Fatalf("NewGame before EndGame should fail with ErrWrongPhase, got %v", err)
+	}
+	if err := r.EndGame(); err != nil {
+		t.Fatalf("EndGame: %v", err)
+	}
+	if r.phase != PhaseGameOver {
+		t.Fatalf("expected gameover, got %s", r.phase)
+	}
+	if r.results == nil || len(r.results.Board) != 3 {
+		t.Fatalf("expected the leaderboard to survive into game-over, got %+v", r.results)
+	}
+
+	if err := r.NewGame(); err != nil {
+		t.Fatalf("NewGame: %v", err)
+	}
+	if r.phase != PhaseLobby {
+		t.Fatalf("expected lobby after a new game, got %s", r.phase)
+	}
+	if len(r.players) != 3 {
+		t.Fatalf("a new game should keep everyone seated, got %d players", len(r.players))
+	}
+	for _, p := range r.players {
+		if p.Score != 0 {
+			t.Errorf("%s should have a clean slate for a new game, got score %d", p.Name, p.Score)
+		}
+	}
+}

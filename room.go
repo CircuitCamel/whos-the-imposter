@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"sort"
 	"strings"
@@ -22,11 +23,18 @@ const (
 	PhaseDiscuss  Phase = "discuss"
 	PhaseVote     Phase = "vote"
 	PhaseResults  Phase = "results"
+	PhaseGameOver Phase = "gameover"
 )
 
-const (
-	MaxNameLen = 16
+const MaxNameLen = 16
+
+// MinPlayers and maxPlayers bound how many connected players a round needs
+// and how many seats the room has. Both start at the values that felt right
+// at a real table and are overridable at startup — see -min-players and
+// -max-players in main.go.
+var (
 	MinPlayers = 2
+	maxPlayers = 16
 )
 
 // graceTTL is how long a player (or the host screen) may stay disconnected
@@ -40,14 +48,12 @@ var (
 	ErrNameTaken   = errors.New("someone already has that name")
 	ErrBadCode     = errors.New("wrong room code")
 	ErrRoomFull    = errors.New("room is full")
-	ErrNotEnough   = errors.New("need at least 3 connected players")
 	ErrWrongPhase  = errors.New("that isn't allowed right now")
 	ErrNotInRound  = errors.New("you're sitting this round out")
 	ErrBadTarget   = errors.New("no such player to vote for")
 	ErrSelfVote    = errors.New("you can't vote for yourself")
 	ErrHostTaken   = errors.New("another screen is already hosting")
 	ErrNotYourTurn = errors.New("it isn't your turn to answer")
-	maxPlayers     = 16
 	codeAlphabet   = "ABCDEFGHIJKLMNPQRSTUVWXYZ2"
 	roomCodeLength = 4
 )
@@ -63,6 +69,11 @@ type Player struct {
 	IsImposter bool
 	SeenRole   bool
 	VotedFor   string
+
+	// Score persists across rounds for the life of the game (see the
+	// leaderboard in resultsView) and only resets when the host starts a
+	// new game from the game-over screen.
+	Score int
 }
 
 func (p *Player) connected() bool { return p.Conns > 0 }
@@ -165,6 +176,15 @@ type tallyEntry struct {
 	Votes int    `json:"votes"`
 }
 
+// boardEntry is one row of the leaderboard, sent with every round's results
+// so both the results screen and the final game-over screen can read it
+// straight off the last-known results without a separate round trip.
+type boardEntry struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Score int    `json:"score"`
+}
+
 type resultsView struct {
 	Topic      string       `json:"topic"`
 	Hint       string       `json:"hint"`
@@ -174,6 +194,7 @@ type resultsView struct {
 	Accused    string       `json:"accused"`
 	Caught     bool         `json:"caught"`
 	Tie        bool         `json:"tie"`
+	Board      []boardEntry `json:"board"`
 }
 
 type snapshot struct {
@@ -306,7 +327,7 @@ func (r *Room) StartRound() error {
 		}
 	}
 	if len(eligible) < MinPlayers {
-		return ErrNotEnough
+		return fmt.Errorf("need at least %d connected players", MinPlayers)
 	}
 	sort.Slice(eligible, func(i, j int) bool { return eligible[i].Order < eligible[j].Order })
 
@@ -356,7 +377,7 @@ func (r *Room) MarkSeen(id string) error {
 func (r *Room) OpenVoting() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.phase == PhaseVote || r.phase == PhaseResults || r.phase == PhaseLobby {
+	if r.phase == PhaseVote || r.phase == PhaseResults || r.phase == PhaseLobby || r.phase == PhaseGameOver {
 		return ErrWrongPhase
 	}
 	r.phase = PhaseVote
@@ -495,7 +516,7 @@ func (r *Room) Vote(voterID, targetID string) error {
 	return nil
 }
 
-// CloseVoting ends voting early — useful when someone rage-quits mid-vote.
+// CloseVoting ends voting early - useful when someone rage-quits mid-vote.
 func (r *Room) CloseVoting() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -511,6 +532,11 @@ func (r *Room) CloseVoting() error {
 func (r *Room) ToLobby() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.resetToLobbyLocked()
+	r.publishLocked()
+}
+
+func (r *Room) resetToLobbyLocked() {
 	r.phase = PhaseLobby
 	r.results = nil
 	r.imposterID = ""
@@ -523,7 +549,37 @@ func (r *Room) ToLobby() {
 		p.SeenRole = false
 		p.VotedFor = ""
 	}
+}
+
+// EndGame moves from a round's results straight to the game-over screen,
+// which shows every player just the top of the leaderboard rather than the
+// full per-round breakdown. Scores carry over so the host can look at them
+// on the way to starting a new game.
+func (r *Room) EndGame() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.phase != PhaseResults {
+		return ErrWrongPhase
+	}
+	r.phase = PhaseGameOver
 	r.publishLocked()
+	return nil
+}
+
+// NewGame clears every score and returns to the lobby, ready for a fresh
+// game night with the same seats.
+func (r *Room) NewGame() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.phase != PhaseGameOver {
+		return ErrWrongPhase
+	}
+	for _, p := range r.players {
+		p.Score = 0
+	}
+	r.resetToLobbyLocked()
+	r.publishLocked()
+	return nil
 }
 
 func (r *Room) Kick(id string) {
@@ -629,8 +685,41 @@ func (r *Room) tallyLocked() {
 		res.Caught = accusedID == r.imposterID
 	}
 
+	// Score a point for every voter who correctly named the imposter,
+	// regardless of how the group verdict landed, plus a point for the
+	// imposter whenever that verdict didn't land on them.
+	if imp, ok := r.players[r.imposterID]; ok {
+		for _, p := range r.players {
+			if p.InRound && p.VotedFor == r.imposterID {
+				p.Score++
+			}
+		}
+		if !res.Caught {
+			imp.Score++
+		}
+	}
+	res.Board = r.boardLocked()
+
 	r.results = res
 	r.phase = PhaseResults
+}
+
+// boardLocked ranks every seated player by score, highest first, ties
+// broken by name so a repeated tally doesn't visibly reshuffle. It includes
+// everyone in the room, not just this round's participants, so someone who
+// sat a round out doesn't drop off the leaderboard.
+func (r *Room) boardLocked() []boardEntry {
+	board := make([]boardEntry, 0, len(r.players))
+	for _, p := range r.players {
+		board = append(board, boardEntry{ID: p.ID, Name: p.Name, Score: p.Score})
+	}
+	sort.Slice(board, func(i, j int) bool {
+		if board[i].Score != board[j].Score {
+			return board[i].Score > board[j].Score
+		}
+		return board[i].Name < board[j].Name
+	})
+	return board
 }
 
 // ---------- SSE subscribers ----------
@@ -700,7 +789,7 @@ func (r *Room) publishLocked() {
 		select {
 		case s.ch <- msg:
 		default:
-			// Slow or dead reader — drop it; the browser will reconnect and
+			// Slow or dead reader - drop it; the browser will reconnect and
 			// pick up a fresh snapshot on the way back in.
 		}
 	}
@@ -766,7 +855,7 @@ func (r *Room) snapshotLocked(playerID string, isHost bool) snapshot {
 			snap.Ask = a
 		}
 	}
-	if r.phase == PhaseResults {
+	if r.phase == PhaseResults || r.phase == PhaseGameOver {
 		snap.Results = r.results
 	}
 	if isHost {
@@ -800,8 +889,8 @@ func (r *Room) snapshotLocked(playerID string, isHost bool) snapshot {
 // ---------- reaping ----------
 
 // Reap drops players and host screens that have been gone longer than the
-// grace period. When an occupied room empties completely — every player gone
-// and no host screen — the room resets and picks up a brand new code.
+// grace period. When an occupied room empties completely - every player gone
+// and no host screen - the room resets and picks up a brand new code.
 func (r *Room) Reap() {
 	r.mu.Lock()
 	defer r.mu.Unlock()

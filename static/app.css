@@ -427,7 +427,7 @@ body {
     font-size: 1.6rem;
 }
 
-/* one pip per question — a real progress bar for the ring */
+/* one pip per question - a real progress bar for the ring */
 .pips {
     display: flex;
     gap: 0.4rem;
@@ -553,6 +553,94 @@ body {
 .tally .n {
     font-family: var(--mono);
     color: var(--fog);
+}
+
+/* ── leaderboard ───────────────────────────────────────────────────── */
+.board {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.board li {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--ink-line);
+    font-size: 0.95rem;
+}
+
+.board .rank {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--fog);
+    width: 1.4em;
+    text-align: right;
+}
+
+.board .rank--1,
+.board .rank--2,
+.board .rank--3 {
+    color: var(--manila);
+    font-weight: 700;
+}
+
+.board .who {
+    flex: 1;
+}
+
+.board .n {
+    font-family: var(--mono);
+    color: var(--fog);
+}
+
+/* ── final standings podium ───────────────────────────────────────── */
+.podium {
+    list-style: none;
+    margin: 1.25rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.podium li {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.9rem 1.1rem;
+    border: 1px solid var(--ink-line);
+    border-radius: var(--r);
+}
+
+.podium .place {
+    font-family: var(--mono);
+    font-weight: 800;
+    font-size: 1.3rem;
+    color: var(--fog);
+    width: 1.4em;
+}
+
+.podium .who {
+    flex: 1;
+    font-weight: 700;
+    font-size: 1.05rem;
+}
+
+.podium .n {
+    font-family: var(--mono);
+    color: var(--fog);
+}
+
+.podium li:first-child {
+    border-color: var(--manila);
+    background: var(--ink-raise);
+}
+
+.podium li:first-child .place {
+    color: var(--manila);
+    font-size: 1.7rem;
 }
 
 /* ── host screen ───────────────────────────────────────────────────── */
