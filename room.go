@@ -26,7 +26,7 @@ const (
 
 const (
 	MaxNameLen = 16
-	MinPlayers = 3
+	MinPlayers = 2
 )
 
 // graceTTL is how long a player (or the host screen) may stay disconnected

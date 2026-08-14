@@ -38,6 +38,25 @@ const nameInput = $("#f-name");
 const codeInput = $("#f-code");
 const joinNote = $("#join-note");
 
+// A QR code from the host screen links here with the room code baked in —
+// fill it in and drop straight into the name field so scanning it is the
+// only step before typing a name.
+const params = new URLSearchParams(location.search);
+const scannedCode = params.get("code");
+if (scannedCode) {
+    codeInput.value = scannedCode.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
+    history.replaceState(null, "", location.pathname);
+}
+
+let autoFocused = false;
+function showJoin() {
+    show("join");
+    if (scannedCode && !autoFocused) {
+        autoFocused = true;
+        nameInput.focus();
+    }
+}
+
 nameInput.addEventListener("input", () => {
     $("#f-count").textContent = `${[...nameInput.value].length}/16`;
 });
@@ -69,7 +88,7 @@ async function join() {
 $("#b-leave").addEventListener("click", async () => {
     if (stream) { stream.close(); stream = null; }
     await post("/api/leave").catch(() => { });
-    show("join");
+    showJoin();
 });
 
 /* ── stream ─────────────────────────────────────────────────────────── */
@@ -85,7 +104,7 @@ function connect() {
         if (me && !me.joined) {
             stream.close();
             stream = null;
-            show("join");
+            showJoin();
         }
     };
 }
@@ -93,7 +112,7 @@ function connect() {
 /* ── rendering ──────────────────────────────────────────────────────── */
 
 function render(s) {
-    if (!s.you) { show("join"); return; }
+    if (!s.you) { showJoin(); return; }
     lastSnap = s;
 
     $("#l-code").textContent = s.code;
@@ -158,22 +177,37 @@ function renderLobby(s) {
 function renderReveal(s) {
     show("reveal");
     if (!s.you.inRound) {
+        $("#b-got").hidden = true;
         $("#r-status").textContent = "You joined mid-round — you're in from the next one.";
         return;
     }
-    if (s.role) {
-        paintOpenFace($("#r-open"), s.role);
-        openCard(justTapped);
-        justTapped = false;
-        $("#b-got").hidden = false;
-        const left = s.players.filter((p) => p.inRound && p.connected && !p.ready).length;
-        $("#r-status").textContent = left > 0
-            ? `Waiting on ${left} more to open their file.`
-            : "Everyone's opened theirs. Put it away when you're ready.";
-    } else {
+    if (!s.role) {
         $("#b-got").hidden = true;
         $("#r-status").textContent = "Nobody else can see this. Open it, then keep it to yourself.";
+        return;
     }
+
+    const left = s.players.filter((p) => p.inRound && p.connected && !p.ready).length;
+
+    // Every push while we're still on the reveal screen (someone else opening
+    // their file, a phase recheck) re-runs this — respect a prior "put away"
+    // instead of snapping the card back open underneath the player.
+    if (dismissed) {
+        closeCard();
+        $("#b-got").hidden = true;
+        $("#r-status").textContent = left > 0
+            ? `Put away. Waiting on ${left} more to open theirs.`
+            : "Put away. Everyone's opened theirs.";
+        return;
+    }
+
+    paintOpenFace($("#r-open"), s.role);
+    openCard(justTapped);
+    justTapped = false;
+    $("#b-got").hidden = false;
+    $("#r-status").textContent = left > 0
+        ? `Waiting on ${left} more to open their file.`
+        : "Everyone's opened theirs. Put it away when you're ready.";
 }
 
 function renderQuestion(s) {
@@ -311,6 +345,10 @@ function openCard(animate) {
     }
 }
 
+function closeCard() {
+    $("#r-card").classList.remove("is-open");
+}
+
 function resetCard() {
     const card = $("#r-card");
     card.classList.add("is-instant");
@@ -349,6 +387,6 @@ fetch("/api/me")
     .then((r) => r.json())
     .then((me) => {
         if (me.joined) connect();  // cookie still good — straight back in
-        else show("join");
+        else showJoin();
     })
-    .catch(() => show("join"));
+    .catch(() => showJoin());

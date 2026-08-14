@@ -32,6 +32,14 @@ function button(label, path, variant) {
 function render(s) {
     $("#h-code").textContent = s.code;
     $("#h-url").textContent = s.joinURL || location.origin;
+    $("#h-code-corner-code").textContent = s.code;
+
+    // The big code + QR only earn their space while people are still
+    // joining — once the round's under way, shrink to a corner reminder.
+    const inLobby = s.phase === "lobby";
+    $("#h-hero").hidden = !inLobby;
+    $("#h-code-corner").hidden = inLobby;
+    if (inLobby) renderQR(s.code, s.joinURL || location.origin);
 
     const seated = s.players.filter((p) => p.connected).length;
     const inRound = s.players.filter((p) => p.inRound && p.connected);
@@ -193,6 +201,25 @@ function renderResults(r) {
     }));
 
     box.replaceChildren(v, topic, imp, tally);
+}
+
+/* ── join QR ────────────────────────────────────────────────────────── */
+
+let qrKey = null;
+
+// The code and URL only ever change between rounds, not every SSE tick, so
+// skip re-encoding the QR unless one of them actually moved.
+function renderQR(code, joinURL) {
+    const key = code + "|" + joinURL;
+    if (key === qrKey) return;
+    qrKey = key;
+
+    const box = $("#h-qr");
+    const url = `${joinURL}/?code=${encodeURIComponent(code)}`;
+    const qr = qrcode(0, "M");
+    qr.addData(url);
+    qr.make();
+    box.innerHTML = qr.createSvgTag({ cellSize: 5, margin: 8, scalable: true, alt: `Join at ${url}` });
 }
 
 function strong(text) {

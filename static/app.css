@@ -115,6 +115,10 @@ body {
     padding-left: 0.5em;
 }
 
+.btn[hidden] {
+    display: none;
+}
+
 .btn {
     display: block;
     width: 100%;
@@ -218,8 +222,16 @@ body {
 .file {
     position: relative;
     width: 100%;
-    aspect-ratio: 4 / 5;
-    max-height: 56vh;
+    /* Wider than tall, so on a phone screen it never eats enough height to
+       push the put-away button below the fold. */
+    aspect-ratio: 3 / 2;
+    /* vh sizes against the viewport with the browser chrome hidden, which
+       overshoots on phones while the address bar is showing; svh is sized
+       against what's actually on screen. Keep the vh line first as a
+       fallback for browsers that don't know svh. Belt and suspenders with
+       the aspect ratio above. */
+    max-height: 42vh;
+    max-height: 42svh;
     margin: 0 auto 1.25rem;
     perspective: 1400px;
     background: none;
@@ -549,6 +561,30 @@ body {
     margin: 0 auto;
 }
 
+.code-corner {
+    position: fixed;
+    top: max(0.9rem, env(safe-area-inset-top));
+    right: max(0.9rem, env(safe-area-inset-right));
+    margin: 0;
+    padding: 0.4rem 0.7rem;
+    border: 1px solid var(--ink-line);
+    border-radius: var(--r);
+    background: var(--ink);
+    font-family: var(--mono);
+    font-size: 0.9rem;
+    letter-spacing: 0.08em;
+    color: var(--manila);
+    z-index: 10;
+}
+
+.code-corner[hidden] {
+    display: none;
+}
+
+.code-corner #h-code-corner-code {
+    font-weight: 700;
+}
+
 .code-hero {
     border: 1px solid var(--ink-line);
     border-radius: var(--r);
@@ -574,6 +610,21 @@ body {
     font-size: clamp(0.95rem, 3.5vw, 1.3rem);
     color: var(--chalk);
     overflow-wrap: anywhere;
+}
+
+.qr {
+    display: inline-block;
+    background: var(--chalk);
+    padding: 0.6rem;
+    border-radius: var(--r);
+    line-height: 0;
+    margin-bottom: 0.8rem;
+}
+
+.qr svg {
+    display: block;
+    width: clamp(8.5rem, 26vw, 12rem);
+    height: clamp(8.5rem, 26vw, 12rem);
 }
 
 .panels {

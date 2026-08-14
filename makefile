@@ -1,8 +1,8 @@
 run:
-	go run main.go
+	go run .
 
 build:
-	go build -o ./bin/imposter main.go
+	go build -o ./bin/imposter .
 
 clean:
 	rm ./bin/imposter && rm -d ./bin/

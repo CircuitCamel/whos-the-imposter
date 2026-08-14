@@ -23,10 +23,13 @@
             <p class="sub">Close the other host tab, wait a moment, then reload this page.</p>
         </section>
 
+        <p class="code-corner" id="h-code-corner" hidden>Room <span id="h-code-corner-code">····</span></p>
+
         <section class="screen" id="s-main" hidden>
-            <div class="code-hero">
+            <div class="code-hero" id="h-hero">
                 <p class="eyebrow">Room code</p>
                 <p class="code" id="h-code">····</p>
+                <div class="qr" id="h-qr" aria-label="Scan to join"></div>
                 <p class="join-url" id="h-url">—</p>
             </div>
 
@@ -49,6 +52,7 @@
         </section>
 
     </main>
+    <script src="/static/qrcode.js"></script>
     <script src="/static/host.js"></script>
 </body>
 
