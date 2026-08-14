@@ -12,7 +12,7 @@ bad()  { FAIL=$((FAIL+1)); echo "  FAIL  $1"; }
 check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (want '$3', got '$2')"; fi; }
 has()  { if grep -q "$2" <<<"$1"; then ok "$3"; else bad "$3 -- in: $1"; fi; }
 
-./imposter -addr ":$PORT" -topics topics.csv -grace 2s > /tmp/imp/server.log 2>&1 &
+./bin/imposter -addr ":$PORT" -topics topics.csv -grace 2s > /tmp/imp/server.log 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null; pkill -P $$ curl 2>/dev/null; exit' EXIT
 sleep 0.6

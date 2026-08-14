@@ -1,50 +1,55 @@
 <!doctype html>
 <html lang="en">
+
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#131c26">
-<title>Imposter — shared screen</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#131c26">
+    <title>Imposter — shared screen</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=Courier+Prime:wght@400;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/static/app.css">
 </head>
+
 <body>
-<main class="host">
+    <main class="host">
 
-  <section class="screen" id="s-blocked" hidden>
-    <p class="eyebrow">Shared screen</p>
-    <h1 class="title">Another screen is hosting</h1>
-    <p class="sub">Close the other host tab, wait a moment, then reload this page.</p>
-  </section>
+        <section class="screen" id="s-blocked" hidden>
+            <p class="eyebrow">Shared screen</p>
+            <h1 class="title">Another screen is hosting</h1>
+            <p class="sub">Close the other host tab, wait a moment, then reload this page.</p>
+        </section>
 
-  <section class="screen" id="s-main" hidden>
-    <div class="code-hero">
-      <p class="eyebrow">Room code</p>
-      <p class="code" id="h-code">····</p>
-      <p class="join-url" id="h-url">—</p>
-    </div>
+        <section class="screen" id="s-main" hidden>
+            <div class="code-hero">
+                <p class="eyebrow">Room code</p>
+                <p class="code" id="h-code">····</p>
+                <p class="join-url" id="h-url">—</p>
+            </div>
 
-    <div class="panels">
-      <div class="panel">
-        <h2>Table</h2>
-        <p class="phase-line" id="h-phase">Waiting for players</p>
-        <p class="sub" id="h-hint" style="margin-bottom:1rem"></p>
-        <div id="h-ask" style="margin-bottom:1.5rem"></div>
-        <div id="h-results" style="margin-bottom:1.5rem"></div>
-        <ul class="roster" id="h-roster"></ul>
-      </div>
+            <div class="panels">
+                <div class="panel">
+                    <h2>Table</h2>
+                    <p class="phase-line" id="h-phase">Waiting for players</p>
+                    <p class="sub" id="h-hint" style="margin-bottom:1rem"></p>
+                    <div id="h-ask" style="margin-bottom:1.5rem"></div>
+                    <div id="h-results" style="margin-bottom:1.5rem"></div>
+                    <ul class="roster" id="h-roster"></ul>
+                </div>
 
-      <div class="panel">
-        <h2>Controls</h2>
-        <div id="h-controls"></div>
-        <p class="note" id="h-note" role="status"></p>
-      </div>
-    </div>
-  </section>
+                <div class="panel">
+                    <h2>Controls</h2>
+                    <div id="h-controls"></div>
+                    <p class="note" id="h-note" role="status"></p>
+                </div>
+            </div>
+        </section>
 
-</main>
-<script src="/static/host.js"></script>
+    </main>
+    <script src="/static/host.js"></script>
 </body>
+
 </html>
