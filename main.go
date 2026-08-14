@@ -95,6 +95,7 @@ func main() {
 	mux.HandleFunc("POST /api/leave", s.handleLeave)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("POST /api/reveal", s.handleReveal)
+	mux.HandleFunc("POST /api/putaway", s.handlePutAway)
 	mux.HandleFunc("POST /api/answered", s.handleAnswered)
 	mux.HandleFunc("POST /api/vote", s.handleVote)
 
@@ -267,6 +268,14 @@ func (s *Server) handleLeave(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleReveal(w http.ResponseWriter, r *http.Request) {
 	if err := s.room.MarkSeen(cookieVal(r, cookiePlayer)); err != nil {
+		writeErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handlePutAway(w http.ResponseWriter, r *http.Request) {
+	if err := s.room.Dismiss(cookieVal(r, cookiePlayer)); err != nil {
 		writeErr(w, http.StatusConflict, err)
 		return
 	}

@@ -62,10 +62,10 @@ function render(s) {
             break;
         }
         case "reveal": {
-            $("#h-phase").textContent = `Round ${s.round} - opening files`;
+            $("#h-phase").textContent = `Round ${s.round} - reading files`;
             $("#h-hint").textContent = waiting > 0
-                ? `${waiting} still to open theirs.`
-                : "Everyone's looked.";
+                ? `${waiting} still to put theirs away.`
+                : "Everyone's put theirs away.";
             controls.append(button("Skip to open discussion", "/api/host/discuss"));
             break;
         }
@@ -123,7 +123,8 @@ function render(s) {
         const tag = document.createElement("span");
         tag.className = "tag";
         if (!p.connected) tag.textContent = "away";
-        else if (s.phase === "reveal") tag.textContent = p.inRound ? (p.ready ? "opened" : "sealed") : "next round";
+        else if (s.phase === "reveal") tag.textContent = !p.inRound ? "next round"
+            : p.ready ? "put away" : p.opened ? "reading" : "sealed";
         else if (s.phase === "question") {
             const a = s.ask;
             tag.textContent = !p.inRound ? "watching"

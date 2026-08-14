@@ -62,7 +62,11 @@ done
 echo; echo "-- open the files"
 for i in 1 2 3; do post p$i "/api/reveal" '{}' >/dev/null; done
 sleep 0.5
-check "phase auto-advances to the questioning round" "$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['phase'])" "$(last p1)")" "question"
+check "opening files alone doesn't advance the round" "$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['phase'])" "$(last p1)")" "reveal"
+
+for i in 1 2 3; do post p$i "/api/putaway" '{}' >/dev/null; done
+sleep 0.5
+check "phase auto-advances once everyone's put their file away" "$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['phase'])" "$(last p1)")" "question"
 
 imp=0; topics=0
 for i in 1 2 3 4; do

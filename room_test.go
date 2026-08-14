@@ -24,6 +24,23 @@ func seatPlayers(t *testing.T, r *Room, n int) []*Player {
 	return out
 }
 
+// openAndDismissAll opens and puts away every seated player's file - reveal
+// doesn't hand off to questioning on opens alone, see the comment on
+// maybeAdvanceLocked's PhaseReveal case.
+func openAndDismissAll(t *testing.T, r *Room) {
+	t.Helper()
+	for _, p := range r.players {
+		if err := r.MarkSeen(p.ID); err != nil {
+			t.Fatalf("mark seen: %v", err)
+		}
+	}
+	for _, p := range r.players {
+		if err := r.Dismiss(p.ID); err != nil {
+			t.Fatalf("dismiss: %v", err)
+		}
+	}
+}
+
 // TestAskRingCoversEveryone is the property the questioning round has to hold:
 // for n players there are exactly n questions, everyone asks once, everyone is
 // asked once, and nobody is handed their own name.
@@ -36,11 +53,7 @@ func TestAskRingCoversEveryone(t *testing.T) {
 			if err := r.StartRound(); err != nil {
 				t.Fatalf("n=%d: %v", n, err)
 			}
-			for _, p := range r.players {
-				if err := r.MarkSeen(p.ID); err != nil {
-					t.Fatalf("n=%d mark seen: %v", n, err)
-				}
-			}
+			openAndDismissAll(t, r)
 			if r.phase != PhaseQuestion {
 				t.Fatalf("n=%d: expected question phase, got %s", n, r.phase)
 			}
@@ -120,11 +133,7 @@ func TestRingSurvivesAPlayerLeaving(t *testing.T) {
 	if err := r.StartRound(); err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range r.players {
-		if err := r.MarkSeen(p.ID); err != nil {
-			t.Fatal(err)
-		}
-	}
+	openAndDismissAll(t, r)
 
 	// The player due to be asked next walks out.
 	_, target, ok := r.currentAskLocked()
@@ -166,11 +175,7 @@ func TestFourPlayersGetFourQuestions(t *testing.T) {
 	if err := r.StartRound(); err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range r.players {
-		if err := r.MarkSeen(p.ID); err != nil {
-			t.Fatal(err)
-		}
-	}
+	openAndDismissAll(t, r)
 	count := 0
 	for r.phase == PhaseQuestion {
 		_, target, ok := r.currentAskLocked()
@@ -187,6 +192,44 @@ func TestFourPlayersGetFourQuestions(t *testing.T) {
 	}
 	if count != 4 {
 		t.Fatalf("4 players should get 4 questions, got %d", count)
+	}
+}
+
+// TestRevealWaitsForEveryoneToPutAway guards against the round handing off
+// to questioning the instant the last player opens their file, while
+// everyone else has only opened - not put away - theirs. That would let
+// whoever's already dismissed watch the ask/answer pairing form before the
+// last player has even read their own role.
+func TestRevealWaitsForEveryoneToPutAway(t *testing.T) {
+	r := NewRoom(topicsForTest(), "http://test")
+	ps := seatPlayers(t, r, 4)
+	if err := r.StartRound(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, p := range ps {
+		if err := r.MarkSeen(p.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if r.phase != PhaseReveal {
+		t.Fatalf("everyone opening their file (without putting any away) should not advance the round, got %s", r.phase)
+	}
+
+	for _, p := range ps[:3] {
+		if err := r.Dismiss(p.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if r.phase != PhaseReveal {
+		t.Fatalf("one player still hasn't put their file away, expected reveal, got %s", r.phase)
+	}
+
+	if err := r.Dismiss(ps[3].ID); err != nil {
+		t.Fatal(err)
+	}
+	if r.phase != PhaseQuestion {
+		t.Fatalf("everyone has put their file away, expected question, got %s", r.phase)
 	}
 }
 
@@ -207,11 +250,7 @@ func imposterOf(t *testing.T, r *Room) *Player {
 // (if any) into voting, without caring who says what.
 func advanceToVote(t *testing.T, r *Room) {
 	t.Helper()
-	for _, p := range r.players {
-		if err := r.MarkSeen(p.ID); err != nil {
-			t.Fatalf("mark seen: %v", err)
-		}
-	}
+	openAndDismissAll(t, r)
 	for r.phase == PhaseQuestion {
 		_, target, ok := r.currentAskLocked()
 		if !ok {

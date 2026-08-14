@@ -68,6 +68,7 @@ type Player struct {
 	InRound    bool
 	IsImposter bool
 	SeenRole   bool
+	Dismissed  bool // put their file away this round, not just opened it
 	VotedFor   string
 
 	// Score persists across rounds for the life of the game (see the
@@ -144,7 +145,8 @@ type playerView struct {
 	Name      string `json:"name"`
 	Connected bool   `json:"connected"`
 	InRound   bool   `json:"inRound"`
-	Ready     bool   `json:"ready"` // seen their role, or cast their vote
+	Opened    bool   `json:"opened"` // seen their role this round, reveal phase only
+	Ready     bool   `json:"ready"`  // put their file away, cast their vote, etc - phase-dependent
 }
 
 type youView struct {
@@ -335,6 +337,7 @@ func (r *Room) StartRound() error {
 		p.InRound = false
 		p.IsImposter = false
 		p.SeenRole = false
+		p.Dismissed = false
 		p.VotedFor = ""
 	}
 	for _, p := range eligible {
@@ -369,6 +372,29 @@ func (r *Room) MarkSeen(id string) error {
 		return ErrNotInRound
 	}
 	p.SeenRole = true
+	r.maybeAdvanceLocked()
+	r.publishLocked()
+	return nil
+}
+
+// Dismiss marks a player as having put their file away this round. Reveal
+// only hands off to questioning once every seated player has dismissed,
+// not merely opened, their file - see the comment in maybeAdvanceLocked.
+func (r *Room) Dismiss(id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	p, ok := r.players[id]
+	if !ok {
+		return ErrNotInRound
+	}
+	if r.phase != PhaseReveal {
+		return ErrWrongPhase
+	}
+	if !p.InRound {
+		return ErrNotInRound
+	}
+	p.Dismissed = true
 	r.maybeAdvanceLocked()
 	r.publishLocked()
 	return nil
@@ -547,6 +573,7 @@ func (r *Room) resetToLobbyLocked() {
 		p.InRound = false
 		p.IsImposter = false
 		p.SeenRole = false
+		p.Dismissed = false
 		p.VotedFor = ""
 	}
 }
@@ -589,11 +616,15 @@ func (r *Room) Kick(id string) {
 func (r *Room) maybeAdvanceLocked() {
 	switch r.phase {
 	case PhaseReveal:
+		// Gated on Dismissed, not SeenRole: advancing the instant the last
+		// player opens their file would let anyone who already put theirs
+		// away watch the ask/answer pairing form before that player has
+		// even read their role, let alone hidden it again.
 		n, done := 0, 0
 		for _, p := range r.players {
 			if p.InRound && p.connected() {
 				n++
-				if p.SeenRole {
+				if p.Dismissed {
 					done++
 				}
 			}
@@ -807,7 +838,7 @@ func (r *Room) snapshotLocked(playerID string, isHost bool) snapshot {
 		ready := false
 		switch r.phase {
 		case PhaseReveal:
-			ready = p.SeenRole
+			ready = p.Dismissed
 		case PhaseQuestion:
 			ready = r.hasAskedLocked(p.ID)
 		case PhaseVote:
@@ -820,6 +851,7 @@ func (r *Room) snapshotLocked(playerID string, isHost bool) snapshot {
 			Name:      p.Name,
 			Connected: p.connected(),
 			InRound:   p.InRound,
+			Opened:    p.SeenRole,
 			Ready:     ready && p.InRound,
 		})
 	}

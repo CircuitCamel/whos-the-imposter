@@ -189,17 +189,21 @@ function renderReveal(s) {
         return;
     }
 
-    const left = s.players.filter((p) => p.inRound && p.connected && !p.ready).length;
+    // p.ready means "dismissed" during reveal, not just "opened" - the round
+    // doesn't hand off to questioning until every file is put away, so
+    // nobody can watch the ask/answer pairing form before they've read
+    // their own role. See the comment in maybeAdvanceLocked (room.go).
+    const notReady = s.players.filter((p) => p.inRound && p.connected && !p.ready).length;
 
-    // Every push while we're still on the reveal screen (someone else opening
-    // their file, a phase recheck) re-runs this - respect a prior "put away"
-    // instead of snapping the card back open underneath the player.
+    // Every push while we're still on the reveal screen (someone else's
+    // file closing, a phase recheck) re-runs this - respect a prior "put
+    // away" instead of snapping the card back open underneath the player.
     if (dismissed) {
         closeCard();
         $("#b-got").hidden = true;
-        $("#r-status").textContent = left > 0
-            ? `Put away. Waiting on ${left} more to open theirs.`
-            : "Put away. Everyone's opened theirs.";
+        $("#r-status").textContent = notReady > 0
+            ? `Put away. Waiting on ${notReady} more to do the same.`
+            : "Put away. Moving on...";
         return;
     }
 
@@ -207,9 +211,10 @@ function renderReveal(s) {
     openCard(justTapped);
     justTapped = false;
     $("#b-got").hidden = false;
-    $("#r-status").textContent = left > 0
-        ? `Waiting on ${left} more to open their file.`
-        : "Everyone's opened theirs. Put it away when you're ready.";
+    const othersLeft = notReady - 1; // notReady counts you too, since you haven't dismissed yet
+    $("#r-status").textContent = othersLeft > 0
+        ? `Waiting on ${othersLeft} more to put theirs away.`
+        : "Everyone else is done. Put yours away when you're ready.";
 }
 
 function renderQuestion(s) {
@@ -410,6 +415,12 @@ $("#r-card").addEventListener("click", () => {
 $("#b-got").addEventListener("click", () => {
     dismissed = true;
     if (lastSnap) render(lastSnap);
+    // The server needs to know too - it's what the rest of the room waits
+    // on before questioning can start. Revert if that didn't land.
+    post("/api/putaway").catch(() => {
+        dismissed = false;
+        if (lastSnap) render(lastSnap);
+    });
 });
 
 $("#b-answered").addEventListener("click", () => {
