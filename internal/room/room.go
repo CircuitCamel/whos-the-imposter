@@ -723,17 +723,20 @@ func (r *Room) tallyLocked() {
 		res.Caught = accusedID == r.imposterID
 	}
 
-	// Score a point for every voter who correctly named the imposter,
-	// regardless of how the group verdict landed, plus a point for the
-	// imposter whenever that verdict didn't land on them.
+	// Score a point for every voter who correctly named the imposter, and a
+	// point for the imposter for every voter who guessed wrong instead. The
+	// imposter's own ballot doesn't count either way - only the guessers'
+	// votes are scored.
 	if imp, ok := r.players[r.imposterID]; ok {
 		for _, p := range r.players {
-			if p.InRound && p.VotedFor == r.imposterID {
-				p.Score++
+			if !p.InRound || p.IsImposter || p.VotedFor == "" {
+				continue
 			}
-		}
-		if !res.Caught {
-			imp.Score++
+			if p.VotedFor == r.imposterID {
+				p.Score++
+			} else {
+				imp.Score++
+			}
 		}
 	}
 	res.Board = r.boardLocked()

@@ -267,7 +267,7 @@ func advanceToVote(t *testing.T, r *Room) {
 
 // TestScoringCorrectVotersAndCaughtImposter covers a unanimous vote against
 // the real imposter: every innocent guessed right and should score, and the
-// imposter - having been caught - should not.
+// imposter - since nobody guessed wrong - should not.
 func TestScoringCorrectVotersAndCaughtImposter(t *testing.T) {
 	r := New(topicsForTest(), "http://test")
 	seatPlayers(t, r, 4)
@@ -312,7 +312,7 @@ func TestScoringCorrectVotersAndCaughtImposter(t *testing.T) {
 
 // TestScoringImposterEscapes covers a split vote where the imposter isn't
 // the accused: whoever still named them correctly scores, and the imposter
-// scores too for evading the group's verdict.
+// scores once for every innocent who guessed wrong instead.
 func TestScoringImposterEscapes(t *testing.T) {
 	r := New(topicsForTest(), "http://test")
 	seatPlayers(t, r, 4)
@@ -356,8 +356,8 @@ func TestScoringImposterEscapes(t *testing.T) {
 	if innocents[1].Score != 0 || innocents[2].Score != 0 {
 		t.Errorf("innocents 1 and 2 guessed wrong, want score 0, got %d and %d", innocents[1].Score, innocents[2].Score)
 	}
-	if imp.Score != 1 {
-		t.Errorf("the imposter evaded the vote, want score 1, got %d", imp.Score)
+	if imp.Score != 2 {
+		t.Errorf("innocents 1 and 2 both guessed wrong, want imposter score 2, got %d", imp.Score)
 	}
 }
 
