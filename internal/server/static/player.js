@@ -320,8 +320,12 @@ function renderResults(s) {
     $("#x-verdict").replaceChildren(v);
 
     $("#x-topic").textContent = r.topic;
-    $("#x-imposter").textContent = r.imposter || "-";
-    $("#x-hint").textContent = r.hint;
+
+    const impLine = $("#x-imposter-line");
+    impLine.replaceChildren("The imposter was ", strong(r.imposter || "-"));
+    impLine.append(r.hint ? ", working from " : ", with no hint to go on");
+    if (r.hint) impLine.append(strong(r.hint));
+    impLine.append(".");
 
     $("#x-tally").replaceChildren(...r.tally.map((t) => {
         const li = document.createElement("li");
@@ -371,6 +375,12 @@ function renderGameOver(s) {
     }));
 }
 
+function strong(text) {
+    const b = document.createElement("b");
+    b.textContent = text;
+    return b;
+}
+
 /* ── the file card ──────────────────────────────────────────────────── */
 
 function paintOpenFace(el, role) {
@@ -381,10 +391,15 @@ function paintOpenFace(el, role) {
         stamp.textContent = "No clearance";
         const label = document.createElement("div");
         label.className = "file__hintlabel";
-        label.textContent = "All you have is";
         const word = document.createElement("p");
         word.className = "file__word";
-        word.textContent = role.hint;
+        if (role.hint) {
+            label.textContent = "All you have is";
+            word.textContent = role.hint;
+        } else {
+            label.textContent = "You're on your own";
+            word.textContent = "Bluff.";
+        }
         el.append(stamp, label, word);
     } else {
         const kicker = document.createElement("div");
