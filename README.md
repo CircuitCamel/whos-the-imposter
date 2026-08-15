@@ -59,6 +59,41 @@ completely fresh, scores included.
 for O(1) player lookups, and by owner account so a host always resolves back
 to their own room.
 
+### Putting this on the internet
+
+This is built for a LAN game night, not for the public web, but nothing
+stops you running it behind a real domain (see `-domain` and the Cloudflare
+notes above) so people can join remotely. It isn't hardened against a
+determined attacker - there's no CAPTCHA, no WAF, no account lockouts - but
+it's meant to survive someone stumbling onto the URL, a search engine
+crawling it, or a script idly trying room codes:
+
+- **`/api/join` and `/api/auth/signin` are rate-limited per IP** - a small
+  token bucket (`internal/server/ratelimit.go`) generous enough for a whole
+  table joining at once or a fumbled password, but a script trying code
+  after code gets a `429` within seconds. A 4-character room code is only
+  ~390,000 combinations; at the throttled rate that's weeks, not minutes.
+- **`-trust-proxy`** decides whether that limiter keys off the real TCP
+  connection or `X-Forwarded-For`. It defaults to off - trusting that header
+  with nothing in front of this server actually setting it would let a
+  client pick a fresh fake IP on every request and walk straight through the
+  limit. Turn it on only when something in front of it (Cloudflare,
+  `cloudflared`, nginx, Caddy) is genuinely the one setting it.
+- **Every request body is capped at 8 KiB** (`http.MaxBytesReader`) before
+  it's ever decoded - nothing this app sends is anywhere close to that.
+- **Standard response headers** on everything: `X-Content-Type-Options:
+  nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: same-origin` (the
+  last one stops a room code sitting in the URL from leaking to the Google
+  Fonts request every page makes, via the `Referer` header).
+- **`/robots.txt` disallows everything** - a live game's URLs have no
+  business in a search index.
+- **Cookies pick up `Secure` automatically** once `-domain` resolves to
+  `https://`; they stay plain over the default LAN `http://` setup, where a
+  `Secure` cookie would just never be sent back.
+- **CSRF** isn't handled with tokens because it doesn't need to be: every
+  mutating endpoint is `POST`, and every cookie is `SameSite=Lax`, which
+  browsers already refuse to attach to a cross-site `POST`.
+
 Flags:
 
 | flag | default | what it does |
@@ -70,19 +105,20 @@ Flags:
 | `-min-players` | `2` | fewest connected players needed to deal a round |
 | `-max-players` | `16` | most players who can be seated in the room |
 | `-accounts` | `accounts.json` | path to the host accounts file |
+| `-trust-proxy` | `false` | trust `X-Forwarded-For` for rate limiting - only when actually behind a reverse proxy that sets it |
 
 Every flag also has an environment variable (`IMPOSTER_PORT`, `IMPOSTER_DOMAIN`,
 `IMPOSTER_TOPICS`, `IMPOSTER_GRACE`, `IMPOSTER_MIN_PLAYERS`,
-`IMPOSTER_MAX_PLAYERS`, `IMPOSTER_ACCOUNTS`), and the server reads a `.env`
-file in the working directory on startup if one exists - copy `.env.example`
-to `.env` to use one. Precedence is flag > real environment variable > `.env`
-> built-in default.
+`IMPOSTER_MAX_PLAYERS`, `IMPOSTER_ACCOUNTS`, `IMPOSTER_TRUST_PROXY`), and the
+server reads a `.env` file in the working directory on startup if one exists -
+copy `.env.example` to `.env` to use one. Precedence is flag > real
+environment variable > `.env` > built-in default.
 
 ## Testing
 
 ```sh
-go test ./...   # ring properties over ~2,800 random rounds, plus auth, scoring, and multi-room
-./smoke.sh      # end-to-end HTTP run: two host accounts + 5 players, 59 assertions
+go test ./...   # ring properties over ~2,800 random rounds, plus auth, scoring, multi-room, and rate limiting
+./smoke.sh      # end-to-end HTTP run: two host accounts + 5 players, 61 assertions
 ```
 
 ## Topics
@@ -161,6 +197,7 @@ Standard Go project layout: a thin `cmd/` entrypoint, everything else as
 ```
 cmd/imposter/main.go           flags, env, startup banner, wiring
 internal/server/                routes, cookies, SSE endpoint, request handlers
+internal/server/ratelimit.go    per-IP token bucket for join/sign-in attempts
 internal/server/static/         the frontend, embedded into the binary
 internal/room/                  game state, phase machine, ask ring, topics loader
 internal/room/manager.go        one Room per host account, keyed by code and by owner
@@ -172,7 +209,7 @@ smoke.sh                        end-to-end HTTP test over a full round
 
 Each internal package owns its own `_test.go` files alongside it
 (`internal/room/room_test.go`, `internal/room/manager_test.go`,
-`internal/auth/auth_test.go`).
+`internal/auth/auth_test.go`, `internal/server/ratelimit_test.go`).
 
 Pushes go out over **Server-Sent Events** rather than WebSockets. Everything
 here is one-way server-to-client, actions are ordinary `POST`s, and SSE gives
@@ -211,14 +248,21 @@ session returns the same room instead of a new one, code lookup is
 case-insensitive, and reaping an abandoned room frees both its code and its
 owner's slot for a genuinely fresh room next time.
 
+`internal/server/ratelimit_test.go` covers the token bucket directly: burst
+then block, refilling over time, IPs tracked independently, and the sweep
+only ever dropping entries that have actually gone idle rather than ones
+that just look "full" (which a drained-and-abandoned bucket never
+naturally becomes again on its own).
+
 `smoke.sh` runs the real thing over HTTP on port 8099 - a host and three
 players with their own cookie jars and live SSE streams - covering name limits,
 wrong codes, duplicate names, role secrecy, the full ring, self-vote rejection,
 auto-advance, cookie reconnection, a room's full lifecycle (dealt on claim,
 holds its code while occupied, freed once fully empty), a second host
 account running a second room at the same time without the two seeing each
-other, and the host account/session flow (bootstrap sign-up, sign-up closing
-itself, wrong passwords, and both layers of the host-endpoint gate).
+other, the host account/session flow (bootstrap sign-up, sign-up closing
+itself, wrong passwords, and both layers of the host-endpoint gate), and
+flooding both `/api/join` and `/api/auth/signin` until a `429` shows up.
 
 `internal/auth/auth_test.go` covers the account `Store` directly: sign-up
 validation, that a wrong password and an unknown email fail the same way,

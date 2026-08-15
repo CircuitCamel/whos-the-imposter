@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"imposter/internal/auth"
@@ -32,15 +34,104 @@ const (
 	// years rather than hours. There's no server-side expiry to match; a
 	// session is good until SignOut or a server restart clears it.
 	authCookieMaxAge = 10 * 365 * 24 * 60 * 60
+
+	// maxBodyBytes caps every JSON request body this server ever decodes.
+	// Nothing it legitimately sends (a name, an email, a password, a vote)
+	// comes close - this is purely to stop a request from making the server
+	// read an unbounded amount of garbage into memory.
+	maxBodyBytes = 8 << 10 // 8 KiB
 )
 
 type Server struct {
 	rooms *room.Manager
 	auth  *auth.Store
+
+	// trustProxy controls whether clientIP reads X-Forwarded-For. Off by
+	// default: trusting that header when nothing is actually stripping and
+	// overwriting it from the outside would let a client pick whatever "IP"
+	// it wants per request and walk straight through the rate limiters.
+	trustProxy bool
+
+	// secureCookies marks every cookie Secure once the caller knows there's
+	// a real HTTPS front door (see -domain) - wrong for the default plain
+	// HTTP LAN setup, where a Secure cookie would just never get sent back.
+	secureCookies bool
+
+	// Separate budgets, because maxing out one shouldn't lock you out of
+	// the other - burst is generous enough for a real table of people
+	// joining at once, or a fumbled password, but throttles a script hard
+	// within seconds of that.
+	joinLimiter   *ipLimiter
+	signinLimiter *ipLimiter
 }
 
-func New(rooms *room.Manager, authStore *auth.Store) *Server {
-	return &Server{rooms: rooms, auth: authStore}
+func New(rooms *room.Manager, authStore *auth.Store, trustProxy, secureCookies bool) *Server {
+	return &Server{
+		rooms:         rooms,
+		auth:          authStore,
+		trustProxy:    trustProxy,
+		secureCookies: secureCookies,
+		joinLimiter:   newIPLimiter(20, 3*time.Second),  // 20 burst, 20/min sustained
+		signinLimiter: newIPLimiter(10, 10*time.Second), // 10 burst, 6/min sustained
+	}
+}
+
+// Sweep clears out rate-limit bookkeeping for IPs that have been quiet for
+// a long while, so a long-running server doesn't accumulate one entry per
+// address that's ever made a request.
+func (s *Server) Sweep() {
+	s.joinLimiter.Sweep()
+	s.signinLimiter.Sweep()
+}
+
+// clientIP returns the address a rate limiter should key off. RemoteAddr is
+// always trustworthy (a client can't lie about the TCP connection it's
+// actually using), but behind a reverse proxy every request looks like it
+// comes from the proxy - useless for telling one script apart from another.
+// -trust-proxy opts into reading X-Forwarded-For instead, which is only
+// safe when something in front of this server actually strips or
+// overwrites that header from the outside (Cloudflare, cloudflared, nginx,
+// and Caddy all do); with it off, nothing here believes a header a client
+// could just make up.
+func (s *Server) clientIP(r *http.Request) string {
+	if s.trustProxy {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if ip := strings.TrimSpace(strings.Split(xff, ",")[0]); ip != "" {
+				return ip
+			}
+		}
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+// limitBody caps every request body this server reads. Nothing it
+// legitimately handles - a name, an email, a password, a vote - comes
+// anywhere close; this just stops a request from making the server read an
+// unbounded amount of garbage into memory.
+func (s *Server) limitBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// securityHeaders sets a small, standard set of response headers that cost
+// nothing for a legitimate visitor and close off some generic browser-level
+// attack surface for anyone else: no MIME-sniffing a response into
+// something executable, no framing this page from another site, and no
+// leaking a room code sitting in the URL to a third party (the Google Fonts
+// request every page makes) via the Referer header.
+func (s *Server) securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "same-origin")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // roomHandler is like http.HandlerFunc, but for routes that only make sense
@@ -58,6 +149,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", files))
 	mux.HandleFunc("GET /", s.page("static/index.html"))
 	mux.HandleFunc("GET /host", s.page("static/host.html"))
+	mux.HandleFunc("GET /robots.txt", s.handleRobots)
 
 	mux.HandleFunc("GET /api/me", s.handleMe)
 	mux.HandleFunc("POST /api/join", s.handleJoin)
@@ -83,7 +175,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/host/end", s.forHost(s.handleHostEnd))
 	mux.HandleFunc("POST /api/host/newgame", s.forHost(s.handleHostNewGame))
 
-	return mux
+	return s.securityHeaders(s.limitBody(mux))
 }
 
 // ---------- helpers ----------
@@ -99,6 +191,14 @@ func (s *Server) page(name string) http.HandlerFunc {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Write(b)
 	}
+}
+
+// handleRobots keeps a live game's URLs out of search engines entirely -
+// there's nothing here worth indexing, and "someone found this in a search
+// result" is exactly the accidental-discovery case worth closing off.
+func (s *Server) handleRobots(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	fmt.Fprint(w, "User-agent: *\nDisallow: /\n")
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -119,12 +219,18 @@ func cookieVal(r *http.Request, name string) string {
 	return c.Value
 }
 
-func setCookie(w http.ResponseWriter, name, val string, maxAge int) {
+// setCookie marks cookies Secure whenever this server was told it's sitting
+// behind HTTPS (see secureCookies in New) - browsers won't send a Secure
+// cookie back over a plain HTTP connection, which is exactly right once
+// there's a real HTTPS front door, and exactly wrong for the default LAN
+// setup where there isn't one.
+func (s *Server) setCookie(w http.ResponseWriter, name, val string, maxAge int) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     name,
 		Value:    val,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   s.secureCookies,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   maxAge,
 	})
@@ -179,6 +285,13 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
+	// Rate-limited ahead of even decoding the body: a room code is only 4
+	// characters, so without this a script could brute-force it in minutes.
+	if !s.joinLimiter.Allow(s.clientIP(r)) {
+		writeErr(w, http.StatusTooManyRequests, errors.New("too many attempts - wait a moment and try again"))
+		return
+	}
+
 	var body struct {
 		Code string `json:"code"`
 		Name string `json:"name"`
@@ -200,8 +313,8 @@ func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setCookie(w, cookiePlayer, p.ID, cookieMaxAge)
-	setCookie(w, cookiePlayerRoom, rm.Code(), cookieMaxAge)
+	s.setCookie(w, cookiePlayer, p.ID, cookieMaxAge)
+	s.setCookie(w, cookiePlayerRoom, rm.Code(), cookieMaxAge)
 	writeJSON(w, http.StatusOK, map[string]any{"id": p.ID, "name": p.Name})
 }
 
@@ -209,8 +322,8 @@ func (s *Server) handleLeave(w http.ResponseWriter, r *http.Request) {
 	if rm, ok := s.rooms.Lookup(cookieVal(r, cookiePlayerRoom)); ok {
 		rm.Leave(cookieVal(r, cookiePlayer))
 	}
-	setCookie(w, cookiePlayer, "", -1)
-	setCookie(w, cookiePlayerRoom, "", -1)
+	s.setCookie(w, cookiePlayer, "", -1)
+	s.setCookie(w, cookiePlayerRoom, "", -1)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -295,12 +408,17 @@ func (s *Server) handleSignUp(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
-		setCookie(w, cookieAuth, token, authCookieMaxAge)
+		s.setCookie(w, cookieAuth, token, authCookieMaxAge)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request) {
+	if !s.signinLimiter.Allow(s.clientIP(r)) {
+		writeErr(w, http.StatusTooManyRequests, errors.New("too many attempts - wait a moment and try again"))
+		return
+	}
+
 	email, password, err := decodeAuthBody(r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
@@ -311,13 +429,13 @@ func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, err)
 		return
 	}
-	setCookie(w, cookieAuth, token, authCookieMaxAge)
+	s.setCookie(w, cookieAuth, token, authCookieMaxAge)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request) {
 	s.auth.SignOut(cookieVal(r, cookieAuth))
-	setCookie(w, cookieAuth, "", -1)
+	s.setCookie(w, cookieAuth, "", -1)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -337,8 +455,8 @@ func (s *Server) handleHostClaim(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, err)
 		return
 	}
-	setCookie(w, cookieHost, sess, cookieMaxAge)
-	setCookie(w, cookieHostRoom, rm.Code(), cookieMaxAge)
+	s.setCookie(w, cookieHost, sess, cookieMaxAge)
+	s.setCookie(w, cookieHostRoom, rm.Code(), cookieMaxAge)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "code": rm.Code()})
 }
 

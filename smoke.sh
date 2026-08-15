@@ -216,6 +216,28 @@ else bad "reclaiming after everyone left should not resurrect the old room"; fi
 r=$(post p9 "/api/join" "{\"code\":\"$CODE\",\"name\":\"Late\"}")
 has "$r" "wrong room code" "the old code no longer works"
 
+echo; echo "-- rate limiting"
+# Every curl in this script runs on localhost, so every /api/join and
+# /api/auth/signin call made so far - across every jar above - has already
+# been drawing down the *same* per-IP bucket. This just needs to push it the
+# rest of the way past its burst and confirm the tail end gets a 429; it's
+# not trying to measure the exact threshold.
+seen429=false
+for i in $(seq 1 20); do
+  code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+    -d '{"code":"ZZZZ","name":"Flooder"}' "$BASE/api/join")
+  [ "$code" = "429" ] && seen429=true
+done
+$seen429 && ok "flooding /api/join eventually gets rate-limited" || bad "flooding /api/join was never rate-limited"
+
+seen429=false
+for i in $(seq 1 15); do
+  code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+    -d '{"email":"host@example.com","password":"wrong"}' "$BASE/api/auth/signin")
+  [ "$code" = "429" ] && seen429=true
+done
+$seen429 && ok "flooding /api/auth/signin eventually gets rate-limited" || bad "flooding /api/auth/signin was never rate-limited"
+
 echo
 echo "passed: $PASS   failed: $FAIL"
 [ "$FAIL" -eq 0 ]

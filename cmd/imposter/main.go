@@ -33,6 +33,8 @@ func main() {
 	minPlayers := flag.Int("min-players", config.EnvIntOr("IMPOSTER_MIN_PLAYERS", room.MinPlayers), "fewest connected players needed to deal a round")
 	maxPlayersFlag := flag.Int("max-players", config.EnvIntOr("IMPOSTER_MAX_PLAYERS", room.MaxPlayers), "most players who can be seated in the room")
 	accountsPath := flag.String("accounts", config.EnvOr("IMPOSTER_ACCOUNTS", "accounts.json"), "path to the host accounts file")
+	trustProxy := flag.Bool("trust-proxy", config.EnvBoolOr("IMPOSTER_TRUST_PROXY", false),
+		"trust the X-Forwarded-For header for rate limiting - only turn this on when something in front of this server (Cloudflare, cloudflared, nginx, Caddy) actually sets it, or a client can forge it to dodge the limits")
 	flag.Parse()
 
 	if *minPlayers < 1 {
@@ -60,7 +62,12 @@ func main() {
 		joinURL = fmt.Sprintf("http://%s:%s", lanIP(), portOf(*addr))
 	}
 	rooms := room.NewManager(topics, joinURL)
-	srv := server.New(rooms, accounts)
+	// A domain that resolves to https:// means there's a real HTTPS front
+	// door (see publicURL) - cookies can be marked Secure. The default LAN
+	// join URL is always http://, where that flag would just stop the
+	// browser from ever sending them back.
+	secureCookies := strings.HasPrefix(joinURL, "https://")
+	srv := server.New(rooms, accounts, *trustProxy, secureCookies)
 
 	// Sweep often enough that seats free up promptly once the grace period
 	// is up, without spinning on a server that nobody's using.
@@ -76,6 +83,7 @@ func main() {
 		defer t.Stop()
 		for range t.C {
 			rooms.Reap()
+			srv.Sweep()
 		}
 	}()
 

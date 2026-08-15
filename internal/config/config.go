@@ -73,3 +73,18 @@ func EnvIntOr(key string, def int) int {
 	}
 	return n
 }
+
+// EnvBoolOr returns the named environment variable parsed as a bool (per
+// strconv.ParseBool: "1", "t", "true", "0", "f", "false", ... in any case),
+// or def if it's unset or empty.
+func EnvBoolOr(key string, def bool) bool {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		log.Fatalf("%s=%q is not a true/false value", key, v)
+	}
+	return b
+}
