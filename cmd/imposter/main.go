@@ -59,11 +59,11 @@ func main() {
 	if joinURL == "" {
 		joinURL = fmt.Sprintf("http://%s:%s", lanIP(), portOf(*addr))
 	}
-	rm := room.New(topics, joinURL)
-	srv := server.New(rm, accounts)
+	rooms := room.NewManager(topics, joinURL)
+	srv := server.New(rooms, accounts)
 
 	// Sweep often enough that seats free up promptly once the grace period
-	// is up, without spinning on a room that nobody's in.
+	// is up, without spinning on a server that nobody's using.
 	sweep := room.GraceTTL / 3
 	if sweep > 10*time.Second {
 		sweep = 10 * time.Second
@@ -75,7 +75,7 @@ func main() {
 		t := time.NewTicker(sweep)
 		defer t.Stop()
 		for range t.C {
-			rm.Reap()
+			rooms.Reap()
 		}
 	}()
 
@@ -87,7 +87,7 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	announce(joinURL, rm.Code(), len(topics))
+	announce(joinURL, len(topics))
 	log.Fatal(httpServer.ListenAndServe())
 }
 
@@ -115,9 +115,11 @@ func portOf(addr string) string {
 	return "8080"
 }
 
-func announce(joinURL, code string, nTopics int) {
-	fmt.Printf("\n  topics loaded   %d\n", nTopics)
-	fmt.Printf("  room code       %s\n\n", code)
+// announce prints what's known at startup. There's no room code to show
+// yet - rooms are dealt lazily, one per host account, the moment each one
+// signs in and claims the shared screen.
+func announce(joinURL string, nTopics int) {
+	fmt.Printf("\n  topics loaded   %d\n\n", nTopics)
 	fmt.Printf("  players join    %s\n", joinURL)
 	fmt.Printf("  shared screen   %s/host\n\n", joinURL)
 }

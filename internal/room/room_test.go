@@ -14,7 +14,7 @@ func seatPlayers(t *testing.T, r *Room, n int) []*Player {
 	t.Helper()
 	out := make([]*Player, 0, n)
 	for i := 0; i < n; i++ {
-		p, err := r.Join(r.Code(), fmt.Sprintf("P%d", i), "")
+		p, err := r.Join(fmt.Sprintf("P%d", i), "")
 		if err != nil {
 			t.Fatalf("join %d: %v", i, err)
 		}

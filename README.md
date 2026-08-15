@@ -13,34 +13,51 @@ go build -o imposter ./cmd/imposter
 ./imposter
 ```
 
-It prints the room code and the two URLs on startup:
+It prints the two URLs on startup:
 
 ```
   topics loaded   50
-  room code       KVQM
 
   players join    http://192.168.1.42:8080
   shared screen   http://192.168.1.42:8080/host
 ```
 
-Open the shared screen on a laptop or TV, everyone else opens the join URL on
-their phone and types the code. You can play too - open the join URL on your
-own phone alongside the host screen.
+There's no room code yet at this point - rooms are dealt lazily, one per
+host account, the moment each one signs in and claims the shared screen (see
+below). Open `/host` on a laptop or TV, sign in, and the room code appears
+there. Everyone else opens the join URL on their phone and types that code.
+You can play too - open the join URL on your own phone alongside the host
+screen.
 
 ### Who can run the shared screen
 
 `/host` is behind a sign-in, so a stranger who finds the URL can't hijack
-your game. The **first** visit to `/host` gets to create the one host
-account (email + password); after that, sign-up closes itself to
-unauthenticated visitors and only an already-signed-in host can create
-another one (there's an "Add another host" control on the shared screen once
-you're in, for a co-host).
+your game. The **first** visit to `/host` gets to create a host account
+(email + password); after that, sign-up closes itself to unauthenticated
+visitors, and only an already-signed-in host can create another one (there's
+an "Add another host" control on the shared screen once you're in).
 
 Passwords are hashed with bcrypt - never stored or logged in the clear.
 Accounts live in `accounts.json` next to the binary (path configurable, see
 `-accounts` below), so they survive a restart; sessions don't, and last
 until you sign out or the server restarts. The session cookie is a 32-character
 random value, not a UUID, generated the same way player and room IDs are.
+
+### One room per host account
+
+Each host account gets its own room, so different people (say, you and a
+family member) can each run their own game night off the same server at the
+same time, without seeing or interfering with each other's rooms. A room is
+created the moment its account first claims the shared screen, and reclaiming
+later (a reload, a second device) always lands back on that same room rather
+than dealing a new one - right up until it's completely empty (every player
+gone, host screen closed, both past `-grace`), at which point it's freed
+entirely: the code goes back into circulation and the next claim starts
+completely fresh, scores included.
+
+`internal/room.Manager` is what this actually is: rooms keyed by join code
+for O(1) player lookups, and by owner account so a host always resolves back
+to their own room.
 
 Flags:
 
@@ -64,8 +81,8 @@ to `.env` to use one. Precedence is flag > real environment variable > `.env`
 ## Testing
 
 ```sh
-go test ./...   # ring properties over ~2,800 random rounds, plus auth and scoring
-./smoke.sh      # end-to-end HTTP run: host account + 3 players, 53 assertions
+go test ./...   # ring properties over ~2,800 random rounds, plus auth, scoring, and multi-room
+./smoke.sh      # end-to-end HTTP run: two host accounts + 5 players, 59 assertions
 ```
 
 ## Topics
@@ -146,6 +163,7 @@ cmd/imposter/main.go           flags, env, startup banner, wiring
 internal/server/                routes, cookies, SSE endpoint, request handlers
 internal/server/static/         the frontend, embedded into the binary
 internal/room/                  game state, phase machine, ask ring, topics loader
+internal/room/manager.go        one Room per host account, keyed by code and by owner
 internal/auth/                  host accounts and sessions (bcrypt, no database)
 internal/token/                 random ID generator shared by room and auth
 internal/config/                .env loading, environment variable helpers
@@ -153,7 +171,8 @@ smoke.sh                        end-to-end HTTP test over a full round
 ```
 
 Each internal package owns its own `_test.go` files alongside it
-(`internal/room/room_test.go`, `internal/auth/auth_test.go`).
+(`internal/room/room_test.go`, `internal/room/manager_test.go`,
+`internal/auth/auth_test.go`).
 
 Pushes go out over **Server-Sent Events** rather than WebSockets. Everything
 here is one-way server-to-client, actions are ordinary `POST`s, and SSE gives
@@ -168,8 +187,10 @@ you've tapped to open your file, the imposter's payload has no topic field at
 all, and the host screen never receives either until the round is over. Nothing
 is hidden with CSS - it isn't in the response.
 
-State is one struct behind a mutex. No database; a restart is a fresh room,
-which is the right behaviour for a game night.
+Each room is one struct behind its own mutex, same as always; the Manager
+that owns all of them is just a pair of maps behind a second mutex on top.
+No database anywhere in the stack; a restart is a clean slate for every
+room, which is the right behaviour for a game night.
 
 The frontend is compiled in with `go:embed`, so **rebuild after editing
 anything in `internal/server/static/`** or you'll keep serving the old copy.
@@ -184,12 +205,20 @@ the ring survives someone walking out mid-round. It also checks the order
 actually varies, so it can't quietly degrade into join order, plus the
 scoring and reveal-gating behaviour described above.
 
+`internal/room/manager_test.go` covers the multi-room behaviour directly:
+two accounts get two independently-addressable rooms, reclaiming with a live
+session returns the same room instead of a new one, code lookup is
+case-insensitive, and reaping an abandoned room frees both its code and its
+owner's slot for a genuinely fresh room next time.
+
 `smoke.sh` runs the real thing over HTTP on port 8099 - a host and three
 players with their own cookie jars and live SSE streams - covering name limits,
 wrong codes, duplicate names, role secrecy, the full ring, self-vote rejection,
-auto-advance, cookie reconnection, the room-code reroll, and the host
-account/session flow (bootstrap sign-up, sign-up closing itself, wrong
-passwords, and both layers of the host-endpoint gate).
+auto-advance, cookie reconnection, a room's full lifecycle (dealt on claim,
+holds its code while occupied, freed once fully empty), a second host
+account running a second room at the same time without the two seeing each
+other, and the host account/session flow (bootstrap sign-up, sign-up closing
+itself, wrong passwords, and both layers of the host-endpoint gate).
 
 `internal/auth/auth_test.go` covers the account `Store` directly: sign-up
 validation, that a wrong password and an unknown email fail the same way,
@@ -200,7 +229,5 @@ the clear, and that accounts survive a reload.
 
 - Let the imposter guess the topic at the reveal to steal the win
 - A second questioning lap before voting, reshuffling the ring
-- Multiple rooms (the `Room` struct is already self-contained - key a map by
-  code and look it up per request)
 - A round timer on the shared screen
 - Topic packs - a folder of CSVs and a picker on the host screen

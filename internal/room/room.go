@@ -96,10 +96,6 @@ type Room struct {
 	mu sync.Mutex
 
 	code string
-	// occupied flips true the moment anyone joins or claims the host screen.
-	// The code is only rerolled once an occupied room empties out again, so a
-	// freshly started server doesn't immediately reroll its own code.
-	occupied bool
 
 	phase   Phase
 	round   int
@@ -126,9 +122,17 @@ type Room struct {
 	subs    map[*Sub]bool
 }
 
+// New creates a standalone room with its own random code. Used directly by
+// tests that only care about single-room mechanics; the running server
+// instead goes through a Manager, which is what actually assigns codes and
+// keeps rooms unique across a manager's lifetime.
 func New(topics []Topic, joinURL string) *Room {
+	return newRoomWithCode(topics, joinURL, newRoomCode())
+}
+
+func newRoomWithCode(topics []Topic, joinURL, code string) *Room {
 	return &Room{
-		code:    newRoomCode(),
+		code:    code,
 		phase:   PhaseLobby,
 		players: map[string]*Player{},
 		topics:  topics,
@@ -223,13 +227,13 @@ type snapshot struct {
 
 // ---------- joining ----------
 
-func (r *Room) Join(code, name, existingID string) (*Player, error) {
+// Join adds name as a new player, or - if existingID already has a seat -
+// renames them instead of taking a second one. Which room this is was
+// already decided by the caller (a Manager looks rooms up by code before
+// ever reaching here), so Join itself no longer checks a code.
+func (r *Room) Join(name, existingID string) (*Player, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	if !strings.EqualFold(strings.TrimSpace(code), r.code) {
-		return nil, ErrBadCode
-	}
 
 	name = strings.Join(strings.Fields(name), " ")
 	if n := utf8.RuneCountInString(name); n == 0 || n > MaxNameLen {
@@ -261,7 +265,6 @@ func (r *Room) Join(code, name, existingID string) (*Player, error) {
 	}
 	r.nextOrd++
 	r.players[p.ID] = p
-	r.occupied = true
 	r.publishLocked()
 	return p, nil
 }
@@ -302,14 +305,12 @@ func (r *Room) ClaimHost(sess string) (string, error) {
 	defer r.mu.Unlock()
 
 	if sess != "" && sess == r.hostSess {
-		r.occupied = true
 		return sess, nil
 	}
 	// Free, or the previous host screen has gone away.
 	if r.hostSess == "" || r.hostConns == 0 {
 		r.hostSess = token.New()
 		r.hostLastSeen = time.Now()
-		r.occupied = true
 		r.publishLocked()
 		return r.hostSess, nil
 	}
@@ -927,10 +928,12 @@ func (r *Room) snapshotLocked(playerID string, isHost bool) snapshot {
 
 // ---------- reaping ----------
 
-// Reap drops players and host screens that have been gone longer than the
-// grace period. When an occupied room empties completely - every player gone
-// and no host screen - the room resets and picks up a brand new code.
-func (r *Room) Reap() {
+// Reap drops players and the host connection that have been gone longer
+// than the grace period, and reports whether the room has come out of that
+// completely empty - every player gone and no host screen - which is a
+// Manager's cue to remove it and free up its code and its owner's slot.
+// A standalone Room (outside a Manager) can just ignore the return value.
+func (r *Room) Reap() (empty bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -950,24 +953,12 @@ func (r *Room) Reap() {
 		changed = true
 	}
 
-	if r.occupied && len(r.players) == 0 && r.hostSess == "" {
-		r.code = newRoomCode()
-		r.occupied = false
-		r.phase = PhaseLobby
-		r.round = 0
-		r.results = nil
-		r.imposterID = ""
-		r.topic = Topic{}
-		r.askOrder = nil
-		r.askIdx = 0
-		r.nextOrd = 0
-		changed = true
-	}
-
 	if changed {
 		r.maybeAdvanceLocked()
 		r.publishLocked()
 	}
+
+	return len(r.players) == 0 && r.hostSess == ""
 }
 
 // ---------- randomness ----------

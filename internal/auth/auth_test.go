@@ -86,6 +86,30 @@ func TestSignInRejectsWrongCredentials(t *testing.T) {
 	}
 }
 
+func TestEmailResolvesASession(t *testing.T) {
+	a := newTestStore(t)
+	if err := a.SignUp("Host@Example.com", "the-real-password"); err != nil {
+		t.Fatal(err)
+	}
+	tok, err := a.SignIn("host@example.com", "the-real-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	email, ok := a.Email(tok)
+	if !ok || email != "host@example.com" {
+		t.Fatalf("want (\"host@example.com\", true), got (%q, %v)", email, ok)
+	}
+
+	if _, ok := a.Email("not-a-real-token"); ok {
+		t.Fatal("an unknown token should not resolve to an email")
+	}
+	a.SignOut(tok)
+	if _, ok := a.Email(tok); ok {
+		t.Fatal("a signed-out token should not resolve to an email anymore")
+	}
+}
+
 func TestSignOutInvalidatesTheSession(t *testing.T) {
 	a := newTestStore(t)
 	if err := a.SignUp("host@example.com", "the-real-password"); err != nil {

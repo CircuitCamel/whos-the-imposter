@@ -159,13 +159,21 @@ func (a *Store) SignOut(tok string) {
 
 // IsSignedIn reports whether tok is a live session.
 func (a *Store) IsSignedIn(tok string) bool {
+	_, ok := a.Email(tok)
+	return ok
+}
+
+// Email resolves a session token to the account email that owns it - used
+// at claim time to decide which room an account owns, without needing a
+// separate room-scoped cookie for the mapping.
+func (a *Store) Email(tok string) (string, bool) {
 	if tok == "" {
-		return false
+		return "", false
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	_, ok := a.sessions[tok]
-	return ok
+	email, ok := a.sessions[tok]
+	return email, ok
 }
 
 func normalizeEmail(email string) string {

@@ -11,27 +11,18 @@ ok()   { PASS=$((PASS+1)); echo "  ok    $1"; }
 bad()  { FAIL=$((FAIL+1)); echo "  FAIL  $1"; }
 check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (want '$3', got '$2')"; fi; }
 has()  { if grep -q "$2" <<<"$1"; then ok "$3"; else bad "$3 -- in: $1"; fi; }
+phase(){ python3 -c "import json,sys;print(json.loads(sys.argv[1])['phase'])" "$1"; }
+jcode(){ python3 -c "import json,sys;print(json.loads(sys.argv[1])['code'])" "$1"; }
 
 ./bin/imposter -addr ":$PORT" -topics topics.csv -grace 2s -accounts /tmp/imp/accounts.json > /tmp/imp/server.log 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null; pkill -P $$ curl 2>/dev/null; exit' EXIT
 sleep 0.6
 
-CODE=$(awk '/room code/{print $3}' /tmp/imp/server.log)
-echo "room code: $CODE"
-
 j()  { curl -s -b /tmp/imp/$1.jar -c /tmp/imp/$1.jar "${@:2}"; }
 post(){ j "$1" -X POST -H 'Content-Type: application/json' -d "$3" "$BASE$2"; }
 sse() { curl -s -N -b /tmp/imp/$1.jar "$BASE/api/events" > /tmp/imp/$1.sse & }
 last(){ tr -d '\r' < /tmp/imp/$1.sse | grep '^data: ' | tail -1 | cut -c7-; }
-field(){ python3 -c "import json,sys;d=json.loads(sys.stdin.read() or '{}');print(json.dumps(eval('d'+sys.argv[1]),default=str) if 1 else '')" "$1" 2>/dev/null; }
-
-echo; echo "-- validation"
-r=$(post h "/api/join" "{\"code\":\"ZZZZ\",\"name\":\"Nope\"}");     has "$r" "wrong room code" "wrong code rejected"
-r=$(post h "/api/join" "{\"code\":\"$CODE\",\"name\":\"\"}");         has "$r" "1-16" "empty name rejected"
-r=$(post h "/api/join" "{\"code\":\"$CODE\",\"name\":\"abcdefghijklmnopq\"}"); has "$r" "1-16" "17-char name rejected"
-r=$(post h "/api/join" "{\"code\":\"$CODE\",\"name\":\"abcdefghijklmnop\"}");  has "$r" "\"name\"" "16-char name accepted"
-r=$(post h2 "/api/join" "{\"code\":\"$CODE\",\"name\":\"ABCDEFGHIJKLMNOP\"}"); has "$r" "already has that name" "duplicate name rejected"
 
 echo; echo "-- host account"
 r=$(post host "/api/host/claim" '{}'); has "$r" "sign in required" "unsigned-in browser blocked from claiming"
@@ -41,9 +32,22 @@ r=$(post host "/api/auth/signup" '{"email":"host@example.com","password":"the-re
 r=$(post nobody "/api/auth/signup" '{"email":"squatter@example.com","password":"longenough"}'); has "$r" "existing host" "signup closes itself after the first account"
 r=$(post host "/api/auth/signin" '{"email":"host@example.com","password":"wrong-password"}'); has "$r" "wrong email or password" "sign-in rejects a wrong password"
 
-echo; echo "-- host + players"
-r=$(post host "/api/host/claim" '{}'); has "$r" '"ok":true' "signed-in host claimed the screen"
+# Rooms are dealt lazily now - there's no code to test against until a host
+# has actually claimed one.
+CLAIM=$(post host "/api/host/claim" '{}')
+has "$CLAIM" '"ok":true' "signed-in host claimed a room"
+CODE=$(jcode "$CLAIM")
+echo "room code: $CODE"
 sse host
+
+echo; echo "-- validation"
+r=$(post h "/api/join" "{\"code\":\"ZZZZ\",\"name\":\"Nope\"}");     has "$r" "wrong room code" "wrong code rejected"
+r=$(post h "/api/join" "{\"code\":\"$CODE\",\"name\":\"\"}");         has "$r" "1-16" "empty name rejected"
+r=$(post h "/api/join" "{\"code\":\"$CODE\",\"name\":\"abcdefghijklmnopq\"}"); has "$r" "1-16" "17-char name rejected"
+r=$(post h "/api/join" "{\"code\":\"$CODE\",\"name\":\"abcdefghijklmnop\"}");  has "$r" "\"name\"" "16-char name accepted"
+r=$(post h2 "/api/join" "{\"code\":\"$CODE\",\"name\":\"ABCDEFGHIJKLMNOP\"}"); has "$r" "already has that name" "duplicate name rejected"
+
+echo; echo "-- host + players"
 for i in 1 2 3; do
   post p$i "/api/join" "{\"code\":\"$CODE\",\"name\":\"P$i\"}" >/dev/null
   sse p$i
@@ -61,7 +65,7 @@ r=$(post nobody "/api/host/start" '{}'); has "$r" "only the host" "signed-in but
 echo; echo "-- deal a round"
 post host "/api/host/start" '{}' >/dev/null
 sleep 0.4
-check "phase is reveal" "$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['phase'])" "$(last p1)")" "reveal"
+check "phase is reveal" "$(phase "$(last p1)")" "reveal"
 
 for i in 1 2 3; do
   s=$(last p$i)
@@ -72,11 +76,11 @@ done
 echo; echo "-- open the files"
 for i in 1 2 3; do post p$i "/api/reveal" '{}' >/dev/null; done
 sleep 0.5
-check "opening files alone doesn't advance the round" "$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['phase'])" "$(last p1)")" "reveal"
+check "opening files alone doesn't advance the round" "$(phase "$(last p1)")" "reveal"
 
 for i in 1 2 3; do post p$i "/api/putaway" '{}' >/dev/null; done
 sleep 0.5
-check "phase auto-advances once everyone's put their file away" "$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['phase'])" "$(last p1)")" "question"
+check "phase auto-advances once everyone's put their file away" "$(phase "$(last p1)")" "question"
 
 imp=0; topics=0
 for i in 1 2 3 4; do
@@ -128,7 +132,7 @@ prev_t=$(cut -d" " -f3 <<<"$TARGETS"); next_a=$(cut -d" " -f4 <<<"$ASKERS")
 check "the ring closes back to the first asker" \
   "$(cut -d" " -f4 <<<"$TARGETS")" "$(cut -d" " -f2 <<<"$ASKERS")"
 
-check "questions done means open discussion" "$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['phase'])" "$(last host)")" "discuss"
+check "questions done means open discussion" "$(phase "$(last host)")" "discuss"
 
 echo; echo "-- voting"
 post host "/api/host/voting" '{}' >/dev/null
@@ -143,12 +147,12 @@ r=$(post p1 "/api/vote" "{\"target\":\"$ID1\"}"); has "$r" "vote for yourself" "
 post p1 "/api/vote" "{\"target\":\"$ID2\"}" >/dev/null
 post p2 "/api/vote" "{\"target\":\"$ID3\"}" >/dev/null
 sleep 0.3
-check "still voting with one outstanding" "$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['phase'])" "$(last host)")" "vote"
+check "still voting with one outstanding" "$(phase "$(last host)")" "vote"
 post p3 "/api/vote" "{\"target\":\"$ID2\"}" >/dev/null
 sleep 0.4
 
 fs=$(last host)
-check "results once everyone voted" "$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['phase'])" "$fs")" "results"
+check "results once everyone voted" "$(phase "$fs")" "results"
 has "$fs" '"topic"' "results reveal the topic"
 has "$fs" '"imposter"' "results name the imposter"
 votes=$(python3 -c "import json,sys;print(sum(t['votes'] for t in json.loads(sys.argv[1])['results']['tally']))" "$fs")
@@ -164,27 +168,51 @@ has "$(last p1)" '"phase":"results"' "rejoined straight into the live round"
 echo; echo "-- back to the lobby"
 post host "/api/host/lobby" '{}' >/dev/null
 sleep 0.3
-check "phase back to lobby" "$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['phase'])" "$(last host)")" "lobby"
-check "room code unchanged while occupied" "$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['code'])" "$(last host)")" "$CODE"
+check "phase back to lobby" "$(phase "$(last host)")" "lobby"
+check "room code unchanged while occupied" "$(jcode "$(last host)")" "$CODE"
+
+echo; echo "-- multiple rooms"
+r=$(post host "/api/auth/signup" '{"email":"host2@example.com","password":"second-account-password"}')
+has "$r" '"ok":true' "a signed-in host can create a second account"
+r=$(post host3 "/api/auth/signin" '{"email":"host2@example.com","password":"second-account-password"}')
+has "$r" '"ok":true' "the second account can sign in on its own browser"
+
+CLAIM2=$(post host3 "/api/host/claim" '{}')
+CODE2=$(jcode "$CLAIM2")
+if [ -n "$CODE2" ] && [ "$CODE2" != "$CODE" ]; then ok "second account got its own room ($CODE2, not $CODE)"
+else bad "second account's room should have a different code than the first ($CODE2 vs $CODE)"; fi
+sse host3
+
+post p4 "/api/join" "{\"code\":\"$CODE2\",\"name\":\"P4\"}" >/dev/null
+post p5 "/api/join" "{\"code\":\"$CODE2\",\"name\":\"P5\"}" >/dev/null
+sse p4; sse p5
+sleep 0.4
+n2=$(python3 -c "import json,sys;print(len(json.loads(sys.argv[1])['players']))" "$(last host3)")
+check "the second room only has its own players" "$n2" "2"
+
+post host3 "/api/host/start" '{}' >/dev/null
+sleep 0.3
+check "the second room's round starts independently" "$(phase "$(last host3)")" "reveal"
+
+rm -f /tmp/imp/host.sse; sse host; sleep 0.4
+check "the first room is untouched by the second room's round" "$(phase "$(last host)")" "lobby"
 
 echo; echo "-- room code lifecycle (grace = 2s)"
 for i in 1 2 3; do post p$i "/api/leave" '{}' >/dev/null; done
 pkill -f "api/events" 2>/dev/null
 sleep 0.5
 rm -f /tmp/imp/host.sse; sse host; sleep 0.5
-check "code holds while the host screen is still up" \
-  "$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['code'])" "$(last host)")" "$CODE"
+check "code holds while the host screen is still up" "$(jcode "$(last host)")" "$CODE"
 
-# now the host leaves too -- room is fully empty, code should reroll
+# now the host leaves too -- room 1 is fully empty, it should be reaped and
+# freed up rather than sitting around forever
 pkill -f "api/events" 2>/dev/null
 sleep 3.5
 rm -f /tmp/imp/host.sse
-post host2 "/api/auth/signin" '{"email":"host@example.com","password":"the-real-password"}' >/dev/null
-post host2 "/api/host/claim" '{}' >/dev/null
-sse host2; sleep 0.5
-NEW=$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['code'])" "$(last host2)")
-if [ "$NEW" != "$CODE" ]; then ok "code rerolled once the room fully emptied ($CODE -> $NEW)"
-else bad "code did not reroll after everyone left"; fi
+CLAIM3=$(post host "/api/host/claim" '{}')
+NEW=$(jcode "$CLAIM3")
+if [ "$NEW" != "$CODE" ]; then ok "reclaiming after the room fully emptied deals a brand new one ($CODE -> $NEW)"
+else bad "reclaiming after everyone left should not resurrect the old room"; fi
 r=$(post p9 "/api/join" "{\"code\":\"$CODE\",\"name\":\"Late\"}")
 has "$r" "wrong room code" "the old code no longer works"
 
