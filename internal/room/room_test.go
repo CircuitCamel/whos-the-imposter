@@ -1,4 +1,4 @@
-package main
+package room
 
 import (
 	"fmt"
@@ -47,7 +47,7 @@ func openAndDismissAll(t *testing.T, r *Room) {
 func TestAskRingCoversEveryone(t *testing.T) {
 	for n := 3; n <= 16; n++ {
 		for trial := 0; trial < 200; trial++ {
-			r := NewRoom(topicsForTest(), "http://test")
+			r := New(topicsForTest(), "http://test")
 			seatPlayers(t, r, n)
 
 			if err := r.StartRound(); err != nil {
@@ -105,7 +105,7 @@ func TestAskRingCoversEveryone(t *testing.T) {
 func TestAskRingIsShuffled(t *testing.T) {
 	seen := map[string]bool{}
 	for trial := 0; trial < 300; trial++ {
-		r := NewRoom(topicsForTest(), "http://test")
+		r := New(topicsForTest(), "http://test")
 		ps := seatPlayers(t, r, 5)
 		if err := r.StartRound(); err != nil {
 			t.Fatal(err)
@@ -128,7 +128,7 @@ func TestAskRingIsShuffled(t *testing.T) {
 // TestRingSurvivesAPlayerLeaving covers someone walking off mid-round: the
 // ring should close up rather than deadlock on a player who isn't there.
 func TestRingSurvivesAPlayerLeaving(t *testing.T) {
-	r := NewRoom(topicsForTest(), "http://test")
+	r := New(topicsForTest(), "http://test")
 	seatPlayers(t, r, 4)
 	if err := r.StartRound(); err != nil {
 		t.Fatal(err)
@@ -170,7 +170,7 @@ func TestRingSurvivesAPlayerLeaving(t *testing.T) {
 
 // TestFourPlayersGetFourQuestions is the example case: 4 players, 4 questions.
 func TestFourPlayersGetFourQuestions(t *testing.T) {
-	r := NewRoom(topicsForTest(), "http://test")
+	r := New(topicsForTest(), "http://test")
 	seatPlayers(t, r, 4)
 	if err := r.StartRound(); err != nil {
 		t.Fatal(err)
@@ -201,7 +201,7 @@ func TestFourPlayersGetFourQuestions(t *testing.T) {
 // whoever's already dismissed watch the ask/answer pairing form before the
 // last player has even read their own role.
 func TestRevealWaitsForEveryoneToPutAway(t *testing.T) {
-	r := NewRoom(topicsForTest(), "http://test")
+	r := New(topicsForTest(), "http://test")
 	ps := seatPlayers(t, r, 4)
 	if err := r.StartRound(); err != nil {
 		t.Fatal(err)
@@ -269,7 +269,7 @@ func advanceToVote(t *testing.T, r *Room) {
 // the real imposter: every innocent guessed right and should score, and the
 // imposter - having been caught - should not.
 func TestScoringCorrectVotersAndCaughtImposter(t *testing.T) {
-	r := NewRoom(topicsForTest(), "http://test")
+	r := New(topicsForTest(), "http://test")
 	seatPlayers(t, r, 4)
 	if err := r.StartRound(); err != nil {
 		t.Fatal(err)
@@ -314,7 +314,7 @@ func TestScoringCorrectVotersAndCaughtImposter(t *testing.T) {
 // the accused: whoever still named them correctly scores, and the imposter
 // scores too for evading the group's verdict.
 func TestScoringImposterEscapes(t *testing.T) {
-	r := NewRoom(topicsForTest(), "http://test")
+	r := New(topicsForTest(), "http://test")
 	seatPlayers(t, r, 4)
 	if err := r.StartRound(); err != nil {
 		t.Fatal(err)
@@ -364,7 +364,7 @@ func TestScoringImposterEscapes(t *testing.T) {
 // TestBoardOrdersByScoreThenName checks the leaderboard sorts highest score
 // first, ties broken alphabetically so a repeated tally doesn't reshuffle.
 func TestBoardOrdersByScoreThenName(t *testing.T) {
-	r := NewRoom(topicsForTest(), "http://test")
+	r := New(topicsForTest(), "http://test")
 	ps := seatPlayers(t, r, 3) // P0, P1, P2
 	ps[0].Score = 1
 	ps[1].Score = 3
@@ -387,7 +387,7 @@ func TestBoardOrdersByScoreThenName(t *testing.T) {
 // survives into the game-over screen, and a new game clears every score
 // without unseating anyone.
 func TestEndGameAndNewGame(t *testing.T) {
-	r := NewRoom(topicsForTest(), "http://test")
+	r := New(topicsForTest(), "http://test")
 	seatPlayers(t, r, 3)
 
 	if err := r.EndGame(); err != ErrWrongPhase {

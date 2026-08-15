@@ -1,4 +1,4 @@
-package main
+package auth
 
 import (
 	"os"
@@ -7,17 +7,17 @@ import (
 	"testing"
 )
 
-func newTestAuthStore(t *testing.T) *AuthStore {
+func newTestStore(t *testing.T) *Store {
 	t.Helper()
-	a, err := loadAuthStore(filepath.Join(t.TempDir(), "accounts.json"))
+	a, err := Load(filepath.Join(t.TempDir(), "accounts.json"))
 	if err != nil {
-		t.Fatalf("loadAuthStore: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 	return a
 }
 
 func TestSignUpThenSignIn(t *testing.T) {
-	a := newTestAuthStore(t)
+	a := newTestStore(t)
 
 	if !a.Empty() {
 		t.Fatal("a fresh store should start empty")
@@ -30,23 +30,23 @@ func TestSignUpThenSignIn(t *testing.T) {
 	}
 
 	// Email matching is case-insensitive.
-	token, err := a.SignIn("host@example.com", "correct horse")
+	tok, err := a.SignIn("host@example.com", "correct horse")
 	if err != nil {
 		t.Fatalf("SignIn: %v", err)
 	}
-	if len(token) != 32 {
-		t.Fatalf("session token should be 32 characters (16 random bytes, hex), got %d: %q", len(token), token)
+	if len(tok) != 32 {
+		t.Fatalf("session token should be 32 characters (16 random bytes, hex), got %d: %q", len(tok), tok)
 	}
-	if strings.Contains(token, "-") {
-		t.Fatalf("session token should not look like a UUID, got %q", token)
+	if strings.Contains(tok, "-") {
+		t.Fatalf("session token should not look like a UUID, got %q", tok)
 	}
-	if !a.IsSignedIn(token) {
+	if !a.IsSignedIn(tok) {
 		t.Fatal("a token just issued by SignIn should be signed in")
 	}
 }
 
 func TestSignUpRejectsBadInput(t *testing.T) {
-	a := newTestAuthStore(t)
+	a := newTestStore(t)
 
 	cases := []struct {
 		name, email, password string
@@ -71,7 +71,7 @@ func TestSignUpRejectsBadInput(t *testing.T) {
 }
 
 func TestSignInRejectsWrongCredentials(t *testing.T) {
-	a := newTestAuthStore(t)
+	a := newTestStore(t)
 	if err := a.SignUp("host@example.com", "the-real-password"); err != nil {
 		t.Fatal(err)
 	}
@@ -87,27 +87,27 @@ func TestSignInRejectsWrongCredentials(t *testing.T) {
 }
 
 func TestSignOutInvalidatesTheSession(t *testing.T) {
-	a := newTestAuthStore(t)
+	a := newTestStore(t)
 	if err := a.SignUp("host@example.com", "the-real-password"); err != nil {
 		t.Fatal(err)
 	}
-	token, err := a.SignIn("host@example.com", "the-real-password")
+	tok, err := a.SignIn("host@example.com", "the-real-password")
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.SignOut(token)
-	if a.IsSignedIn(token) {
+	a.SignOut(tok)
+	if a.IsSignedIn(tok) {
 		t.Fatal("a signed-out token should no longer be signed in")
 	}
 	// Signing out something that was never valid, or already signed out,
 	// shouldn't panic or error.
-	a.SignOut(token)
+	a.SignOut(tok)
 	a.SignOut("")
 }
 
 func TestPasswordsAreHashedAtRestNotStoredInTheClear(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "accounts.json")
-	a, err := loadAuthStore(path)
+	a, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestPasswordsAreHashedAtRestNotStoredInTheClear(t *testing.T) {
 func TestAccountsSurviveAReload(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "accounts.json")
 
-	a, err := loadAuthStore(path)
+	a, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestAccountsSurviveAReload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reloaded, err := loadAuthStore(path)
+	reloaded, err := Load(path)
 	if err != nil {
 		t.Fatalf("reloading: %v", err)
 	}

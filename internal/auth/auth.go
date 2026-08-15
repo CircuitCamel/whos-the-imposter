@@ -1,4 +1,9 @@
-package main
+// Package auth is the host login: accounts and sessions for whoever's
+// allowed to run the shared screen. Passwords are bcrypt-hashed; accounts
+// persist to a flat JSON file (no database, same as the rest of the app),
+// while sessions are memory-only and meant to last indefinitely once
+// issued - good until SignOut or a server restart.
+package auth
 
 import (
 	"encoding/json"
@@ -8,6 +13,8 @@ import (
 	"sync"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"imposter/internal/token"
 )
 
 var (
@@ -25,20 +32,20 @@ type Account struct {
 	PasswordHash string `json:"passwordHash"`
 }
 
-// AuthStore is every host account plus every signed-in session, backed by a
+// Store is every host account plus every signed-in session, backed by a
 // flat JSON file - consistent with the rest of the app (topics.csv, no
 // database). Sessions are intentionally not persisted: they're meant to
 // last indefinitely once issued, but a server restart is a fine place to
 // draw that line, same as everything else in Room resetting on restart.
-type AuthStore struct {
+type Store struct {
 	mu       sync.Mutex
 	path     string
 	accounts map[string]*Account // key: lowercased email
 	sessions map[string]string   // token -> lowercased email
 }
 
-func loadAuthStore(path string) (*AuthStore, error) {
-	a := &AuthStore{
+func Load(path string) (*Store, error) {
+	a := &Store{
 		path:     path,
 		accounts: map[string]*Account{},
 		sessions: map[string]string{},
@@ -62,7 +69,7 @@ func loadAuthStore(path string) (*AuthStore, error) {
 	return a, nil
 }
 
-func (a *AuthStore) saveLocked() error {
+func (a *Store) saveLocked() error {
 	list := make([]*Account, 0, len(a.accounts))
 	for _, acct := range a.accounts {
 		list = append(list, acct)
@@ -80,7 +87,7 @@ func (a *AuthStore) saveLocked() error {
 
 // Empty reports whether any account exists yet - true only for a fresh
 // deployment that hasn't been through its first sign-up.
-func (a *AuthStore) Empty() bool {
+func (a *Store) Empty() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return len(a.accounts) == 0
@@ -88,9 +95,9 @@ func (a *AuthStore) Empty() bool {
 
 // SignUp registers a new host account. Once at least one account exists,
 // callers are expected to gate this behind an existing signed-in session
-// themselves (see main.go's handleSignUp) - AuthStore doesn't know about
-// cookies, so it can't enforce that part on its own.
-func (a *AuthStore) SignUp(email, password string) error {
+// themselves (see internal/server's handleSignUp) - Store doesn't know
+// about cookies, so it can't enforce that part on its own.
+func (a *Store) SignUp(email, password string) error {
 	email = normalizeEmail(email)
 	if !looksLikeEmail(email) {
 		return ErrBadEmail
@@ -118,7 +125,7 @@ func (a *AuthStore) SignUp(email, password string) error {
 // UUID. The cookie it goes into is set to last a very long time; there's no
 // server-side expiry check here, so a token is good until SignOut deletes
 // it or the server restarts.
-func (a *AuthStore) SignIn(email, password string) (string, error) {
+func (a *Store) SignIn(email, password string) (string, error) {
 	email = normalizeEmail(email)
 
 	a.mu.Lock()
@@ -134,30 +141,30 @@ func (a *AuthStore) SignIn(email, password string) (string, error) {
 		return "", ErrBadCredentials
 	}
 
-	token := newID()
-	a.sessions[token] = email
-	return token, nil
+	tok := token.New()
+	a.sessions[tok] = email
+	return tok, nil
 }
 
 // SignOut invalidates a session token. A missing or already-invalid token
 // is a no-op, same as leaving a room you were never in.
-func (a *AuthStore) SignOut(token string) {
-	if token == "" {
+func (a *Store) SignOut(tok string) {
+	if tok == "" {
 		return
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	delete(a.sessions, token)
+	delete(a.sessions, tok)
 }
 
-// IsSignedIn reports whether token is a live session.
-func (a *AuthStore) IsSignedIn(token string) bool {
-	if token == "" {
+// IsSignedIn reports whether tok is a live session.
+func (a *Store) IsSignedIn(tok string) bool {
+	if tok == "" {
 		return false
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	_, ok := a.sessions[token]
+	_, ok := a.sessions[tok]
 	return ok
 }
 

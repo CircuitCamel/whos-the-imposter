@@ -1,4 +1,6 @@
-package main
+// Package config loads startup configuration from a .env file and the
+// environment, ahead of flag parsing.
+package config
 
 import (
 	"bufio"
@@ -8,13 +10,14 @@ import (
 	"strings"
 )
 
-// loadDotenv reads simple KEY=VALUE lines from path and applies them with
-// os.Setenv, so the rest of main can just read the environment. A real
-// environment variable (set by the shell, systemd, a container platform...)
-// always wins over the file — that's a more deliberate override than a
-// checked-in default. A missing file is fine; this is a convenience, not a
-// requirement, so the game still starts from flags/defaults without one.
-func loadDotenv(path string) {
+// LoadDotenv reads simple KEY=VALUE lines from path and applies them with
+// os.Setenv, so the rest of the program can just read the environment. A
+// real environment variable (set by the shell, systemd, a container
+// platform...) always wins over the file - that's a more deliberate
+// override than a checked-in default. A missing file is fine; this is a
+// convenience, not a requirement, so the game still starts from flags and
+// defaults without one.
+func LoadDotenv(path string) {
 	f, err := os.Open(path)
 	if err != nil {
 		return
@@ -48,18 +51,18 @@ func loadDotenv(path string) {
 	}
 }
 
-// envOr returns the named environment variable, or def if it's unset or empty.
-func envOr(key, def string) string {
+// EnvOr returns the named environment variable, or def if it's unset or empty.
+func EnvOr(key, def string) string {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		return v
 	}
 	return def
 }
 
-// envIntOr returns the named environment variable parsed as an int, or def
+// EnvIntOr returns the named environment variable parsed as an int, or def
 // if it's unset or empty. A value that's set but not a number is a config
 // mistake worth stopping the server for, same as an unreadable topics file.
-func envIntOr(key string, def int) int {
+func EnvIntOr(key string, def int) int {
 	v, ok := os.LookupEnv(key)
 	if !ok || v == "" {
 		return def

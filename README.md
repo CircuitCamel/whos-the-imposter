@@ -9,7 +9,7 @@ account passwords.
 ## Run it
 
 ```sh
-go build -o imposter .
+go build -o imposter ./cmd/imposter
 ./imposter
 ```
 
@@ -138,24 +138,29 @@ The seat is held for `-grace` (90s default) before it's released.
 
 ## How it's put together
 
+Standard Go project layout: a thin `cmd/` entrypoint, everything else as
+`internal/` packages so nothing here is importable from outside the module.
+
 ```
-main.go      routes, cookies, SSE endpoint, startup banner
-room.go      game state, phase machine, ask ring, per-player snapshots
-auth.go      host accounts and sessions (bcrypt, no database)
-topics.go    CSV loader
-config.go    .env loading, environment variable helpers
-room_test.go property tests for the questioning ring
-auth_test.go account and session behaviour
-static/      the frontend, embedded into the binary
-smoke.sh     end-to-end HTTP test over a full round
+cmd/imposter/main.go           flags, env, startup banner, wiring
+internal/server/                routes, cookies, SSE endpoint, request handlers
+internal/server/static/         the frontend, embedded into the binary
+internal/room/                  game state, phase machine, ask ring, topics loader
+internal/auth/                  host accounts and sessions (bcrypt, no database)
+internal/token/                 random ID generator shared by room and auth
+internal/config/                .env loading, environment variable helpers
+smoke.sh                        end-to-end HTTP test over a full round
 ```
+
+Each internal package owns its own `_test.go` files alongside it
+(`internal/room/room_test.go`, `internal/auth/auth_test.go`).
 
 Pushes go out over **Server-Sent Events** rather than WebSockets. Everything
 here is one-way server-to-client, actions are ordinary `POST`s, and SSE gives
 you automatic browser reconnection for free - which is exactly the behaviour
 you want when a phone sleeps mid-round. If you later want the phones to push a
 stream of their own (live reactions, a drawing round), swap in
-`gorilla/websocket`; the hub in `room.go` is already shaped for it.
+`gorilla/websocket`; the hub in `internal/room` is already shaped for it.
 
 **Roles never leave the server for the wrong phone.** Each open stream gets its
 own snapshot built for that player. The topic isn't in your payload until
@@ -167,16 +172,17 @@ State is one struct behind a mutex. No database; a restart is a fresh room,
 which is the right behaviour for a game night.
 
 The frontend is compiled in with `go:embed`, so **rebuild after editing
-anything in `static/`** or you'll keep serving the old copy.
+anything in `internal/server/static/`** or you'll keep serving the old copy.
 
 ## What the tests cover
 
-`room_test.go` hammers the ring: for every player count from 3 to 16, 200
-random rounds each, checking that the question count matches the player count,
-that everyone asks and is asked exactly once, that nobody self-asks, that only
-the player being asked can close a question, and that the ring survives someone
-walking out mid-round. It also checks the order actually varies, so it can't
-quietly degrade into join order.
+`internal/room/room_test.go` hammers the ring: for every player count from 3
+to 16, 200 random rounds each, checking that the question count matches the
+player count, that everyone asks and is asked exactly once, that nobody
+self-asks, that only the player being asked can close a question, and that
+the ring survives someone walking out mid-round. It also checks the order
+actually varies, so it can't quietly degrade into join order, plus the
+scoring and reveal-gating behaviour described above.
 
 `smoke.sh` runs the real thing over HTTP on port 8099 - a host and three
 players with their own cookie jars and live SSE streams - covering name limits,
@@ -185,10 +191,10 @@ auto-advance, cookie reconnection, the room-code reroll, and the host
 account/session flow (bootstrap sign-up, sign-up closing itself, wrong
 passwords, and both layers of the host-endpoint gate).
 
-`auth_test.go` covers `AuthStore` directly: sign-up validation, that a wrong
-password and an unknown email fail the same way, sign-out actually
-invalidating a session, that passwords never hit disk in the clear, and that
-accounts survive a reload.
+`internal/auth/auth_test.go` covers the account `Store` directly: sign-up
+validation, that a wrong password and an unknown email fail the same way,
+sign-out actually invalidating a session, that passwords never hit disk in
+the clear, and that accounts survive a reload.
 
 ## Ideas for later
 

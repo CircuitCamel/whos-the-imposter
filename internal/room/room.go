@@ -1,8 +1,11 @@
-package main
+// Package room holds the game itself: phases, players, the questioning
+// ring, voting, scoring, and the per-viewer snapshots that go out over SSE.
+// State is one struct behind a mutex - no database, so a restart is a fresh
+// room, which is the right behaviour for a game night.
+package room
 
 import (
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +15,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"imposter/internal/token"
 )
 
 type Phase string
@@ -28,20 +33,20 @@ const (
 
 const MaxNameLen = 16
 
-// MinPlayers and maxPlayers bound how many connected players a round needs
+// MinPlayers and MaxPlayers bound how many connected players a round needs
 // and how many seats the room has. Both start at the values that felt right
-// at a real table and are overridable at startup — see -min-players and
-// -max-players in main.go.
+// at a real table and are overridable at startup - see -min-players and
+// -max-players in cmd/imposter.
 var (
 	MinPlayers = 2
-	maxPlayers = 16
+	MaxPlayers = 16
 )
 
-// graceTTL is how long a player (or the host screen) may stay disconnected
+// GraceTTL is how long a player (or the host screen) may stay disconnected
 // before being dropped from the room. Long enough by default to survive a
 // phone locking its screen, a browser reload, or a walk to the kitchen.
 // Tunable with the -grace flag.
-var graceTTL = 90 * time.Second
+var GraceTTL = 90 * time.Second
 
 var (
 	ErrBadName     = errors.New("name must be 1-16 characters")
@@ -79,12 +84,12 @@ type Player struct {
 
 func (p *Player) connected() bool { return p.Conns > 0 }
 
-// sub is one open SSE stream. Every state change pushes a fresh snapshot,
-// tailored to who is listening, down each sub's channel.
-type sub struct {
-	playerID string // empty when isHost
-	isHost   bool
-	ch       chan []byte
+// Sub is one open SSE stream. Every state change pushes a fresh snapshot,
+// tailored to who is listening, down each Sub's channel.
+type Sub struct {
+	PlayerID string // empty when IsHost
+	IsHost   bool
+	Ch       chan []byte
 }
 
 type Room struct {
@@ -118,17 +123,17 @@ type Room struct {
 
 	topics  []Topic
 	joinURL string
-	subs    map[*sub]bool
+	subs    map[*Sub]bool
 }
 
-func NewRoom(topics []Topic, joinURL string) *Room {
+func New(topics []Topic, joinURL string) *Room {
 	return &Room{
 		code:    newRoomCode(),
 		phase:   PhaseLobby,
 		players: map[string]*Player{},
 		topics:  topics,
 		joinURL: joinURL,
-		subs:    map[*sub]bool{},
+		subs:    map[*Sub]bool{},
 	}
 }
 
@@ -241,7 +246,7 @@ func (r *Room) Join(code, name, existingID string) (*Player, error) {
 		return p, nil
 	}
 
-	if len(r.players) >= maxPlayers {
+	if len(r.players) >= MaxPlayers {
 		return nil, ErrRoomFull
 	}
 	if err := r.nameFreeLocked(name, ""); err != nil {
@@ -249,7 +254,7 @@ func (r *Room) Join(code, name, existingID string) (*Player, error) {
 	}
 
 	p := &Player{
-		ID:       newID(),
+		ID:       token.New(),
 		Name:     name,
 		Order:    r.nextOrd,
 		LastSeen: time.Now(),
@@ -302,7 +307,7 @@ func (r *Room) ClaimHost(sess string) (string, error) {
 	}
 	// Free, or the previous host screen has gone away.
 	if r.hostSess == "" || r.hostConns == 0 {
-		r.hostSess = newID()
+		r.hostSess = token.New()
 		r.hostLastSeen = time.Now()
 		r.occupied = true
 		r.publishLocked()
@@ -756,11 +761,11 @@ func (r *Room) boardLocked() []boardEntry {
 
 // ---------- SSE subscribers ----------
 
-func (r *Room) Subscribe(playerID string, isHost bool) *sub {
+func (r *Room) Subscribe(playerID string, isHost bool) *Sub {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	s := &sub{playerID: playerID, isHost: isHost, ch: make(chan []byte, 8)}
+	s := &Sub{PlayerID: playerID, IsHost: isHost, Ch: make(chan []byte, 8)}
 	r.subs[s] = true
 
 	if isHost {
@@ -773,7 +778,7 @@ func (r *Room) Subscribe(playerID string, isHost bool) *sub {
 	return s
 }
 
-func (r *Room) Unsubscribe(s *sub) {
+func (r *Room) Unsubscribe(s *Sub) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -781,14 +786,14 @@ func (r *Room) Unsubscribe(s *sub) {
 		return
 	}
 	delete(r.subs, s)
-	close(s.ch)
+	close(s.Ch)
 
-	if s.isHost {
+	if s.IsHost {
 		if r.hostConns > 0 {
 			r.hostConns--
 		}
 		r.hostLastSeen = time.Now()
-	} else if p, ok := r.players[s.playerID]; ok {
+	} else if p, ok := r.players[s.PlayerID]; ok {
 		if p.Conns > 0 {
 			p.Conns--
 		}
@@ -804,22 +809,22 @@ func (r *Room) publishLocked() {
 
 	for s := range r.subs {
 		var msg []byte
-		if s.isHost {
+		if s.IsHost {
 			if hostMsg == nil {
 				hostMsg, _ = json.Marshal(r.snapshotLocked("", true))
 			}
 			msg = hostMsg
 		} else {
-			m, ok := byPlayer[s.playerID]
+			m, ok := byPlayer[s.PlayerID]
 			if !ok {
-				m, _ = json.Marshal(r.snapshotLocked(s.playerID, false))
-				byPlayer[s.playerID] = m
+				m, _ = json.Marshal(r.snapshotLocked(s.PlayerID, false))
+				byPlayer[s.PlayerID] = m
 			}
 			msg = m
 		}
 
 		select {
-		case s.ch <- msg:
+		case s.Ch <- msg:
 		default:
 			// Slow or dead reader - drop it; the browser will reconnect and
 			// pick up a fresh snapshot on the way back in.
@@ -933,14 +938,14 @@ func (r *Room) Reap() {
 	changed := false
 
 	for id, p := range r.players {
-		if !p.connected() && now.Sub(p.LastSeen) > graceTTL {
+		if !p.connected() && now.Sub(p.LastSeen) > GraceTTL {
 			delete(r.players, id)
 			r.clearVotesForLocked(id)
 			r.dropFromOrderLocked(id)
 			changed = true
 		}
 	}
-	if r.hostSess != "" && r.hostConns == 0 && now.Sub(r.hostLastSeen) > graceTTL {
+	if r.hostSess != "" && r.hostConns == 0 && now.Sub(r.hostLastSeen) > GraceTTL {
 		r.hostSess = ""
 		changed = true
 	}
@@ -984,12 +989,4 @@ func newRoomCode() string {
 		b[i] = codeAlphabet[randIndex(len(codeAlphabet))]
 	}
 	return string(b)
-}
-
-func newID() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return hex.EncodeToString([]byte(time.Now().String()))
-	}
-	return hex.EncodeToString(b)
 }

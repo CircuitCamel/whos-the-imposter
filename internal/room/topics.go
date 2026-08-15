@@ -1,4 +1,4 @@
-package main
+package room
 
 import (
 	"encoding/csv"
@@ -14,11 +14,11 @@ type Topic struct {
 	Hint string
 }
 
-// loadTopics reads a two-column CSV: topic,hint
+// LoadTopics reads a two-column CSV: topic,hint
 // A leading "topic,hint" header row is optional and skipped if present.
 // Blank lines and rows missing either column are ignored rather than fatal,
 // so a stray newline at the end of the file won't stop the server.
-func loadTopics(path string) ([]Topic, error) {
+func LoadTopics(path string) ([]Topic, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err

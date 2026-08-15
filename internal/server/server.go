@@ -1,17 +1,19 @@
-package main
+// Package server is the HTTP layer: routes, cookies, request handlers, and
+// the SSE endpoint. It knows how to talk to a room.Room and an auth.Store,
+// but none of the game or account logic lives here.
+package server
 
 import (
 	"embed"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io/fs"
-	"log"
-	"net"
 	"net/http"
-	"strings"
 	"time"
+
+	"imposter/internal/auth"
+	"imposter/internal/room"
 )
 
 //go:embed static
@@ -31,71 +33,17 @@ const (
 )
 
 type Server struct {
-	room *Room
-	auth *AuthStore
+	room *room.Room
+	auth *auth.Store
 }
 
-func main() {
-	loadDotenv(".env")
+func New(rm *room.Room, authStore *auth.Store) *Server {
+	return &Server{room: rm, auth: authStore}
+}
 
-	graceDefault, err := time.ParseDuration(envOr("IMPOSTER_GRACE", "90s"))
-	if err != nil {
-		log.Fatalf("IMPOSTER_GRACE: %v", err)
-	}
-
-	addr := flag.String("addr", ":"+envOr("IMPOSTER_PORT", "8080"), "address to listen on")
-	topicsPath := flag.String("topics", envOr("IMPOSTER_TOPICS", "topics.csv"), "path to the topics CSV (topic,hint)")
-	grace := flag.Duration("grace", graceDefault, "how long a disconnected player keeps their seat")
-	domain := flag.String("domain", envOr("IMPOSTER_DOMAIN", ""),
-		"public address players should use to join, e.g. party.example.com — overrides the LAN IP normally printed and put in the QR code")
-	minPlayers := flag.Int("min-players", envIntOr("IMPOSTER_MIN_PLAYERS", MinPlayers), "fewest connected players needed to deal a round")
-	maxPlayersFlag := flag.Int("max-players", envIntOr("IMPOSTER_MAX_PLAYERS", maxPlayers), "most players who can be seated in the room")
-	accountsPath := flag.String("accounts", envOr("IMPOSTER_ACCOUNTS", "accounts.json"), "path to the host accounts file")
-	flag.Parse()
-
-	if *minPlayers < 1 {
-		log.Fatalf("-min-players must be at least 1, got %d", *minPlayers)
-	}
-	if *maxPlayersFlag < *minPlayers {
-		log.Fatalf("-max-players (%d) can't be less than -min-players (%d)", *maxPlayersFlag, *minPlayers)
-	}
-	graceTTL = *grace
-	MinPlayers = *minPlayers
-	maxPlayers = *maxPlayersFlag
-
-	topics, err := loadTopics(*topicsPath)
-	if err != nil {
-		log.Fatalf("could not load topics: %v", err)
-	}
-
-	auth, err := loadAuthStore(*accountsPath)
-	if err != nil {
-		log.Fatalf("could not load host accounts: %v", err)
-	}
-
-	joinURL := publicURL(*domain)
-	if joinURL == "" {
-		joinURL = fmt.Sprintf("http://%s:%s", lanIP(), portOf(*addr))
-	}
-	s := &Server{room: NewRoom(topics, joinURL), auth: auth}
-
-	// Sweep often enough that seats free up promptly once the grace period
-	// is up, without spinning on a room that nobody's in.
-	sweep := graceTTL / 3
-	if sweep > 10*time.Second {
-		sweep = 10 * time.Second
-	}
-	if sweep < 250*time.Millisecond {
-		sweep = 250 * time.Millisecond
-	}
-	go func() {
-		t := time.NewTicker(sweep)
-		defer t.Stop()
-		for range t.C {
-			s.room.Reap()
-		}
-	}()
-
+// Routes builds the full set of HTTP routes, ready to hand to an
+// *http.Server as its Handler.
+func (s *Server) Routes() http.Handler {
 	sub, _ := fs.Sub(staticFS, "static")
 	files := http.FileServer(http.FS(sub))
 
@@ -128,64 +76,7 @@ func main() {
 	mux.HandleFunc("POST /api/host/end", s.authOnly(s.hostOnly(s.handleHostEnd)))
 	mux.HandleFunc("POST /api/host/newgame", s.authOnly(s.hostOnly(s.handleHostNewGame)))
 
-	srv := &http.Server{
-		Addr:         *addr,
-		Handler:      mux,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 0, // SSE streams stay open
-		IdleTimeout:  120 * time.Second,
-	}
-
-	announce(joinURL, s.room.Code(), len(topics))
-	log.Fatal(srv.ListenAndServe())
-}
-
-// publicURL turns a bare domain (or a full URL) into the address printed at
-// startup and encoded in the host screen's QR code. A scheme-less value is
-// assumed to sit behind a reverse proxy terminating TLS, which is the usual
-// reason to set this in the first place, so it defaults to https. An empty
-// domain means "no override" — the caller falls back to the LAN IP.
-func publicURL(domain string) string {
-	domain = strings.TrimSpace(domain)
-	domain = strings.TrimSuffix(domain, "/")
-	if domain == "" {
-		return ""
-	}
-	if !strings.Contains(domain, "://") {
-		domain = "https://" + domain
-	}
-	return domain
-}
-
-func portOf(addr string) string {
-	if _, p, err := net.SplitHostPort(addr); err == nil && p != "" {
-		return p
-	}
-	return "8080"
-}
-
-func announce(joinURL, code string, nTopics int) {
-	fmt.Printf("\n  topics loaded   %d\n", nTopics)
-	fmt.Printf("  room code       %s\n\n", code)
-	fmt.Printf("  players join    %s\n", joinURL)
-	fmt.Printf("  shared screen   %s/host\n\n", joinURL)
-}
-
-func lanIP() string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return "localhost"
-	}
-	for _, a := range addrs {
-		n, ok := a.(*net.IPNet)
-		if !ok || n.IP.IsLoopback() {
-			continue
-		}
-		if ip4 := n.IP.To4(); ip4 != nil {
-			return ip4.String()
-		}
-	}
-	return "localhost"
+	return mux
 }
 
 // ---------- helpers ----------
@@ -281,7 +172,7 @@ func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
 	p, err := s.room.Join(body.Code, body.Name, cookieVal(r, cookiePlayer))
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, ErrBadCode) {
+		if errors.Is(err, room.ErrBadCode) {
 			status = http.StatusUnauthorized
 		}
 		writeErr(w, status, err)
@@ -357,7 +248,7 @@ func decodeAuthBody(r *http.Request) (email, password string, err error) {
 func (s *Server) handleSignUp(w http.ResponseWriter, r *http.Request) {
 	bootstrapping := s.auth.Empty()
 	if !bootstrapping && !s.auth.IsSignedIn(cookieVal(r, cookieAuth)) {
-		writeErr(w, http.StatusForbidden, ErrSignupsClosed)
+		writeErr(w, http.StatusForbidden, auth.ErrSignupsClosed)
 		return
 	}
 
@@ -529,7 +420,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			return
-		case msg, open := <-sub.ch:
+		case msg, open := <-sub.Ch:
 			if !open {
 				return
 			}
