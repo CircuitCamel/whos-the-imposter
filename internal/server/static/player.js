@@ -89,11 +89,14 @@ async function join() {
     }
 }
 
-$("#b-leave").addEventListener("click", async () => {
+async function leaveRoom() {
     if (stream) { stream.close(); stream = null; }
     await post("/api/leave").catch(() => { });
     showJoin();
-});
+}
+
+$("#b-leave").addEventListener("click", leaveRoom);
+$("#b-leave-gameover").addEventListener("click", leaveRoom);
 
 /* ── stream ─────────────────────────────────────────────────────────── */
 
