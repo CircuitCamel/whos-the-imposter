@@ -66,6 +66,22 @@
 
                 <div class="panel">
                     <h2>Controls</h2>
+
+                    <details class="add-host" id="h-settings" hidden>
+                        <summary>Round settings</summary>
+                        <label class="toggle field">
+                            <input type="checkbox" id="h-hints">
+                            <span>Give the imposter a hint word</span>
+                        </label>
+                        <div class="field">
+                            <div class="label">
+                                <span>Categories</span>
+                                <button type="button" class="link-btn" id="h-cats-all">select all</button>
+                            </div>
+                            <div id="h-cats" class="cat-grid"></div>
+                        </div>
+                    </details>
+
                     <div id="h-controls"></div>
                     <p class="note" id="h-note" role="status"></p>
 

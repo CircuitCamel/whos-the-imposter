@@ -773,6 +773,63 @@ body {
     margin-bottom: 0.9rem;
 }
 
+.toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.95rem;
+    cursor: pointer;
+}
+
+.toggle input {
+    accent-color: var(--manila);
+    width: 1.1rem;
+    height: 1.1rem;
+    flex: none;
+}
+
+.cat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+    gap: 0.5rem 1rem;
+    max-height: 11rem;
+    overflow-y: auto;
+    padding-right: 0.25rem;
+}
+
+.cat-choice {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--fog);
+    cursor: pointer;
+}
+
+.cat-choice input {
+    accent-color: var(--manila);
+    width: 1rem;
+    height: 1rem;
+    flex: none;
+}
+
+.link-btn {
+    background: none;
+    border: 0;
+    color: var(--fog);
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    cursor: pointer;
+    padding: 0;
+}
+
+.link-btn:hover,
+.link-btn:focus-visible {
+    color: var(--manila);
+}
+
 .kick {
     background: none;
     border: 0;

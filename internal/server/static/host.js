@@ -31,9 +31,76 @@ function button(label, path, variant) {
     return b;
 }
 
+/* ── round settings (categories + hint toggle) ─────────────────────── */
+
+// Kept out of #h-controls, which gets fully rebuilt on every SSE push -
+// this panel gets updated in place instead, so an open <details> doesn't
+// snap shut every time a player joins or leaves the lobby.
+
+function prettyCategory(c) {
+    return c.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function onCatsChange() {
+    const boxes = [...$("#h-cats").querySelectorAll("input[type=checkbox]")];
+    let picked = boxes.filter((b) => b.checked).map((b) => b.dataset.cat);
+    if (picked.length === 0) {
+        // Nothing checked reads the same as "every category" on the server -
+        // reflect that here too rather than leaving the panel looking like
+        // there's nothing left to deal from.
+        boxes.forEach((b) => { b.checked = true; });
+    }
+    act("/api/host/categories", { categories: picked });
+}
+
+$("#h-hints").addEventListener("change", () => {
+    act("/api/host/hints", { enabled: $("#h-hints").checked });
+});
+
+$("#h-cats-all").addEventListener("click", () => {
+    const boxes = [...$("#h-cats").querySelectorAll("input[type=checkbox]")];
+    boxes.forEach((b) => { b.checked = true; });
+    act("/api/host/categories", { categories: boxes.map((b) => b.dataset.cat) });
+});
+
+let lastCatKey = null;
+
+function renderSettings(s) {
+    const panel = $("#h-settings");
+    panel.hidden = s.phase !== "lobby";
+    if (s.phase !== "lobby") return;
+
+    $("#h-hints").checked = s.hintsEnabled;
+
+    const cats = s.categories || [];
+    const key = cats.join("|");
+    if (key !== lastCatKey) {
+        lastCatKey = key;
+        $("#h-cats").replaceChildren(...cats.map((c) => {
+            const label = document.createElement("label");
+            label.className = "cat-choice";
+            const box = document.createElement("input");
+            box.type = "checkbox";
+            box.dataset.cat = c;
+            box.addEventListener("change", onCatsChange);
+            const span = document.createElement("span");
+            span.textContent = prettyCategory(c);
+            label.append(box, span);
+            return label;
+        }));
+    }
+
+    const selected = s.selectedCategories || [];
+    const active = selected.length ? new Set(selected) : null; // null = every category
+    for (const box of $("#h-cats").querySelectorAll("input[type=checkbox]")) {
+        box.checked = active ? active.has(box.dataset.cat) : true;
+    }
+}
+
 /* ── rendering ──────────────────────────────────────────────────────── */
 
 function render(s) {
+    renderSettings(s);
     $("#h-code").textContent = s.code;
     $("#h-url").textContent = s.joinURL || location.origin;
     $("#h-code-corner-code").textContent = s.code;
@@ -203,7 +270,10 @@ function renderResults(r) {
 
     const imp = document.createElement("p");
     imp.className = "reveal-line";
-    imp.append("The imposter was ", strong(r.imposter || "-"), ", working from ", strong(r.hint), ".");
+    imp.append("The imposter was ", strong(r.imposter || "-"));
+    imp.append(r.hint ? ", working from " : ", with no hint to go on");
+    if (r.hint) imp.append(strong(r.hint));
+    imp.append(".");
 
     const tally = document.createElement("ul");
     tally.className = "tally";
