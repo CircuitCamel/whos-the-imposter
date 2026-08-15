@@ -8,15 +8,15 @@ import (
 )
 
 // Topic is one entry from the topics file: the location/subject everyone
-// sees, and the single hint word the imposter gets instead.
+// sees, the single hint word the imposter gets instead, and the category
+// it's filed under so the host can narrow a round to a subset of topics.
 type Topic struct {
-	Name string
-	Hint string
+	Name     string
+	Hint     string
+	Category string
 }
 
-// jsonTopic is one element of the topics JSON array. C is a category tag
-// used to group entries in the source file; the game doesn't filter by it
-// yet, so LoadTopics reads it only to skip past it.
+// jsonTopic is one element of the topics JSON array: category, word, hint.
 type jsonTopic struct {
 	C string `json:"c"`
 	W string `json:"w"`
@@ -24,10 +24,10 @@ type jsonTopic struct {
 }
 
 // LoadTopics reads a JSON array of {c, w, h} objects - category, word, and
-// hint. The category is currently unused; the word becomes the topic
-// everyone sees and the hint goes to the imposter instead.
-// Entries missing a word or hint are skipped rather than fatal, so a stray
-// blank entry won't stop the server.
+// hint. The word becomes the topic everyone sees, the hint goes to the
+// imposter instead, and the category lets the host restrict a round to a
+// subset of topics. Entries missing a word or hint are skipped rather than
+// fatal, so a stray blank entry won't stop the server.
 func LoadTopics(path string) ([]Topic, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -46,7 +46,7 @@ func LoadTopics(path string) ([]Topic, error) {
 		if name == "" || hint == "" {
 			continue
 		}
-		topics = append(topics, Topic{Name: name, Hint: hint})
+		topics = append(topics, Topic{Name: name, Hint: hint, Category: strings.TrimSpace(e.C)})
 	}
 
 	if len(topics) == 0 {

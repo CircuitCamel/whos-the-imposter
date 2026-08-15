@@ -165,6 +165,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/auth/signout", s.handleSignOut)
 
 	mux.HandleFunc("POST /api/host/claim", s.handleHostClaim)
+	mux.HandleFunc("POST /api/host/categories", s.forHost(s.handleHostCategories))
+	mux.HandleFunc("POST /api/host/hints", s.forHost(s.handleHostHints))
 	mux.HandleFunc("POST /api/host/start", s.forHost(s.handleHostStart))
 	mux.HandleFunc("POST /api/host/nextq", s.forHost(s.handleHostNextQuestion))
 	mux.HandleFunc("POST /api/host/discuss", s.forHost(s.handleHostDiscuss))
@@ -458,6 +460,30 @@ func (s *Server) handleHostClaim(w http.ResponseWriter, r *http.Request) {
 	s.setCookie(w, cookieHost, sess, cookieMaxAge)
 	s.setCookie(w, cookieHostRoom, rm.Code(), cookieMaxAge)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "code": rm.Code()})
+}
+
+func (s *Server) handleHostCategories(w http.ResponseWriter, r *http.Request, rm *room.Room) {
+	var body struct {
+		Categories []string `json:"categories"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, errors.New("bad request"))
+		return
+	}
+	rm.SetCategories(body.Categories)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleHostHints(w http.ResponseWriter, r *http.Request, rm *room.Room) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, errors.New("bad request"))
+		return
+	}
+	rm.SetHintsEnabled(body.Enabled)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleHostStart(w http.ResponseWriter, r *http.Request, rm *room.Room) {

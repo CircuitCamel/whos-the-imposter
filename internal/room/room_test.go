@@ -9,6 +9,14 @@ func topicsForTest() []Topic {
 	return []Topic{{Name: "Beach", Hint: "Sand"}, {Name: "Casino", Hint: "Chips"}}
 }
 
+func categorizedTopicsForTest() []Topic {
+	return []Topic{
+		{Name: "Beach", Hint: "Sand", Category: "outdoors"},
+		{Name: "Casino", Hint: "Chips", Category: "outdoors"},
+		{Name: "Library", Hint: "Books", Category: "indoors"},
+	}
+}
+
 // seatPlayers joins n players and marks them all connected.
 func seatPlayers(t *testing.T, r *Room, n int) []*Player {
 	t.Helper()
@@ -379,6 +387,120 @@ func TestBoardOrdersByScoreThenName(t *testing.T) {
 		if board[i].Name != name {
 			t.Errorf("position %d: want %s, got %s", i, name, board[i].Name)
 		}
+	}
+}
+
+// TestVoteWaitsForADisconnectedPlayer guards against the tally firing the
+// instant every still-connected player has voted while a disconnected
+// (but still seated) player never got the chance - that would show every
+// other player the result, imposter identity included, before that
+// player's ballot was ever cast.
+func TestVoteWaitsForADisconnectedPlayer(t *testing.T) {
+	r := New(topicsForTest(), "http://test")
+	ps := seatPlayers(t, r, 4)
+	if err := r.StartRound(); err != nil {
+		t.Fatal(err)
+	}
+	advanceToVote(t, r)
+
+	// One player drops mid-vote without casting a ballot.
+	ps[3].Conns = 0
+
+	for _, p := range ps[:3] {
+		target := ps[0].ID
+		if p.ID == target {
+			target = ps[1].ID
+		}
+		if err := r.Vote(p.ID, target); err != nil {
+			t.Fatalf("vote: %v", err)
+		}
+	}
+	if r.phase != PhaseVote {
+		t.Fatalf("expected voting to stay open for the disconnected player, got %s", r.phase)
+	}
+
+	// The host can still force it closed manually.
+	if err := r.CloseVoting(); err != nil {
+		t.Fatalf("close voting: %v", err)
+	}
+	if r.phase != PhaseResults {
+		t.Fatalf("expected results after closing voting, got %s", r.phase)
+	}
+}
+
+// TestCategoriesNarrowTheTopicPool covers the host's per-round category
+// filter: once set, every dealt round comes from that category alone.
+func TestCategoriesNarrowTheTopicPool(t *testing.T) {
+	r := New(categorizedTopicsForTest(), "http://test")
+	seatPlayers(t, r, 3)
+
+	want := []string{"indoors", "outdoors"}
+	if got := r.categories; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("expected categories %v, got %v", want, got)
+	}
+
+	r.SetCategories([]string{"indoors"})
+	for i := 0; i < 20; i++ {
+		if err := r.StartRound(); err != nil {
+			t.Fatal(err)
+		}
+		if r.topic.Name != "Library" {
+			t.Fatalf("expected every round to deal from the indoors category, got %q", r.topic.Name)
+		}
+		r.ToLobby()
+	}
+}
+
+// TestUnknownCategoryFallsBackToEverything covers a selection that no
+// longer matches any topic - it should behave like no filter at all rather
+// than leaving the room with nothing to deal.
+func TestUnknownCategoryFallsBackToEverything(t *testing.T) {
+	r := New(categorizedTopicsForTest(), "http://test")
+	seatPlayers(t, r, 3)
+
+	r.SetCategories([]string{"nonexistent"})
+	if len(r.selectedCategories) != 0 {
+		t.Fatalf("expected an unknown category to be dropped, got %v", r.selectedCategories)
+	}
+	if err := r.StartRound(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestHintsToggleHidesTheHintWord covers turning hints off: the imposter's
+// role and the round's results should both come back with no hint word.
+func TestHintsToggleHidesTheHintWord(t *testing.T) {
+	r := New(topicsForTest(), "http://test")
+	ps := seatPlayers(t, r, 3)
+	r.SetHintsEnabled(false)
+
+	if err := r.StartRound(); err != nil {
+		t.Fatal(err)
+	}
+	imp := imposterOf(t, r)
+	if err := r.MarkSeen(imp.ID); err != nil {
+		t.Fatal(err)
+	}
+	snap := r.snapshotLocked(imp.ID, false)
+	if snap.Role == nil || !snap.Role.Imposter {
+		t.Fatalf("expected the imposter's role, got %+v", snap.Role)
+	}
+	if snap.Role.Hint != "" {
+		t.Fatalf("expected no hint with hints disabled, got %q", snap.Role.Hint)
+	}
+
+	advanceToVote(t, r)
+	for _, p := range ps {
+		if p.ID == imp.ID {
+			continue
+		}
+		if err := r.Vote(p.ID, imp.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.CloseVoting()
+	if r.results.Hint != "" {
+		t.Fatalf("expected empty hint in results with hints disabled, got %q", r.results.Hint)
 	}
 }
 

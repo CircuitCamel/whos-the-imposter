@@ -106,6 +106,16 @@ type Room struct {
 	imposterID string
 	results    *resultsView
 
+	// categories lists every distinct category found in topics, sorted, for
+	// the host's per-round filter. selectedCategories is the host's current
+	// pick - empty means "every category", and it persists across rounds
+	// until the host changes it. hintsEnabled toggles whether the imposter
+	// gets a hint word at all; off makes their file read "no clearance"
+	// with nothing to go on.
+	categories         []string
+	selectedCategories []string
+	hintsEnabled       bool
+
 	// askOrder is a random cycle of the players in the round: each asks the
 	// next one along, and the last asks the first. That gives exactly one
 	// question per player, with everyone asked exactly once, and it flows at
@@ -132,13 +142,31 @@ func New(topics []Topic, joinURL string) *Room {
 
 func newRoomWithCode(topics []Topic, joinURL, code string) *Room {
 	return &Room{
-		code:    code,
-		phase:   PhaseLobby,
-		players: map[string]*Player{},
-		topics:  topics,
-		joinURL: joinURL,
-		subs:    map[*Sub]bool{},
+		code:         code,
+		phase:        PhaseLobby,
+		players:      map[string]*Player{},
+		topics:       topics,
+		categories:   distinctCategories(topics),
+		hintsEnabled: true,
+		joinURL:      joinURL,
+		subs:         map[*Sub]bool{},
 	}
+}
+
+// distinctCategories returns every non-empty category present in topics,
+// sorted and deduplicated, for the host's per-round filter.
+func distinctCategories(topics []Topic) []string {
+	seen := map[string]bool{}
+	var cats []string
+	for _, t := range topics {
+		if t.Category == "" || seen[t.Category] {
+			continue
+		}
+		seen[t.Category] = true
+		cats = append(cats, t.Category)
+	}
+	sort.Strings(cats)
+	return cats
 }
 
 func (r *Room) Code() string {
@@ -223,6 +251,12 @@ type snapshot struct {
 	You        *youView     `json:"you,omitempty"`
 	Role       *roleView    `json:"role,omitempty"`
 	Results    *resultsView `json:"results,omitempty"`
+
+	// Host-only round settings: every available category, the currently
+	// selected ones (empty means all), and whether the imposter gets a hint.
+	Categories         []string `json:"categories,omitempty"`
+	SelectedCategories []string `json:"selectedCategories,omitempty"`
+	HintsEnabled       bool     `json:"hintsEnabled"`
 }
 
 // ---------- joining ----------
@@ -323,6 +357,65 @@ func (r *Room) IsHost(sess string) bool {
 	return sess != "" && sess == r.hostSess
 }
 
+// ---------- round settings ----------
+
+// SetCategories narrows future rounds to the given categories - unknown
+// values are dropped silently (the host UI only ever sends known ones) and
+// an empty or fully-unknown list falls back to every category. The choice
+// persists until the host calls this again.
+func (r *Room) SetCategories(cats []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	known := map[string]bool{}
+	for _, c := range r.categories {
+		known[c] = true
+	}
+	seen := map[string]bool{}
+	clean := make([]string, 0, len(cats))
+	for _, c := range cats {
+		c = strings.TrimSpace(c)
+		if c == "" || !known[c] || seen[c] {
+			continue
+		}
+		seen[c] = true
+		clean = append(clean, c)
+	}
+	r.selectedCategories = clean
+	r.publishLocked()
+}
+
+// SetHintsEnabled toggles whether the imposter gets a hint word at all.
+func (r *Room) SetHintsEnabled(on bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.hintsEnabled = on
+	r.publishLocked()
+}
+
+// topicPoolLocked is every topic StartRound may deal from: every topic in
+// the room, narrowed to the host's selected categories when that selection
+// still matches at least one topic.
+func (r *Room) topicPoolLocked() []Topic {
+	if len(r.selectedCategories) == 0 {
+		return r.topics
+	}
+	want := map[string]bool{}
+	for _, c := range r.selectedCategories {
+		want[c] = true
+	}
+	pool := make([]Topic, 0, len(r.topics))
+	for _, t := range r.topics {
+		if want[t.Category] {
+			pool = append(pool, t)
+		}
+	}
+	if len(pool) == 0 {
+		return r.topics
+	}
+	return pool
+}
+
 // ---------- round flow ----------
 
 func (r *Room) StartRound() error {
@@ -351,7 +444,8 @@ func (r *Room) StartRound() error {
 		p.InRound = true
 	}
 
-	r.topic = r.topics[randIndex(len(r.topics))]
+	pool := r.topicPoolLocked()
+	r.topic = pool[randIndex(len(pool))]
 	imp := eligible[randIndex(len(eligible))]
 	imp.IsImposter = true
 	r.imposterID = imp.ID
@@ -643,9 +737,16 @@ func (r *Room) maybeAdvanceLocked() {
 			}
 		}
 	case PhaseVote:
+		// Deliberately not gated on connected() the way reveal is: a vote
+		// only counts once it's actually cast, so a phone dropping its SSE
+		// connection mid-vote (a lock screen, a reconnect blip) must not
+		// let the tally fire without that player's ballot - it would hand
+		// every other player the imposter's identity while this one was
+		// still deciding. The host's "close voting now" is the escape
+		// hatch for someone who's genuinely gone for good.
 		n, done := 0, 0
 		for _, p := range r.players {
-			if p.InRound && p.connected() {
+			if p.InRound {
 				n++
 				if p.VotedFor != "" {
 					done++
@@ -707,9 +808,13 @@ func (r *Room) tallyLocked() {
 		return tally[i].Name < tally[j].Name
 	})
 
+	hint := ""
+	if r.hintsEnabled {
+		hint = r.topic.Hint
+	}
 	res := &resultsView{
 		Topic:      r.topic.Name,
-		Hint:       r.topic.Hint,
+		Hint:       hint,
 		ImposterID: r.imposterID,
 		Tally:      tally,
 	}
@@ -902,6 +1007,9 @@ func (r *Room) snapshotLocked(playerID string, isHost bool) snapshot {
 	}
 	if isHost {
 		snap.JoinURL = r.joinURL
+		snap.Categories = r.categories
+		snap.SelectedCategories = r.selectedCategories
+		snap.HintsEnabled = r.hintsEnabled
 		return snap
 	}
 
@@ -921,7 +1029,11 @@ func (r *Room) snapshotLocked(playerID string, isHost bool) snapshot {
 	// and only once they've tapped to reveal it.
 	if p.InRound && p.SeenRole && r.phase != PhaseLobby {
 		if p.IsImposter {
-			snap.Role = &roleView{Imposter: true, Hint: r.topic.Hint}
+			hint := ""
+			if r.hintsEnabled {
+				hint = r.topic.Hint
+			}
+			snap.Role = &roleView{Imposter: true, Hint: hint}
 		} else {
 			snap.Role = &roleView{Topic: r.topic.Name}
 		}
