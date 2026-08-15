@@ -14,7 +14,7 @@ has()  { if grep -q "$2" <<<"$1"; then ok "$3"; else bad "$3 -- in: $1"; fi; }
 phase(){ python3 -c "import json,sys;print(json.loads(sys.argv[1])['phase'])" "$1"; }
 jcode(){ python3 -c "import json,sys;print(json.loads(sys.argv[1])['code'])" "$1"; }
 
-./bin/imposter -addr ":$PORT" -topics topics.csv -grace 2s -accounts /tmp/imp/accounts.json > /tmp/imp/server.log 2>&1 &
+./bin/imposter -addr ":$PORT" -topics topics.json -grace 2s -accounts /tmp/imp/accounts.json > /tmp/imp/server.log 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null; pkill -P $$ curl 2>/dev/null; exit' EXIT
 sleep 0.6

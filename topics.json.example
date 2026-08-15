@@ -1,0 +1,27 @@
+[
+    {
+        "c": "around_the_world",
+        "w": "Drinking Water",
+        "h": "Canister"
+    },
+    {
+        "c": "food_and_drinks",
+        "w": "Falafel",
+        "h": "Chickpeas"
+    },
+    {
+        "c": "sports_and_leisure",
+        "w": "Gym",
+        "h": "Train"
+    },
+    {
+        "c": "entertainment",
+        "w": "Flash Mob",
+        "h": "Square"
+    },
+    {
+        "c": "animals_and_nature",
+        "w": "Glacier",
+        "h": "Melt"
+    }
+]

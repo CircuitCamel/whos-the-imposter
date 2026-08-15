@@ -77,6 +77,6 @@ Temporary Items
 
 ### Custom
 bin/
-topics.csv
+topics.json
 .env
 accounts.json

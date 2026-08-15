@@ -33,7 +33,7 @@ type Account struct {
 }
 
 // Store is every host account plus every signed-in session, backed by a
-// flat JSON file - consistent with the rest of the app (topics.csv, no
+// flat JSON file - consistent with the rest of the app (topics.json, no
 // database). Sessions are intentionally not persisted: they're meant to
 // last indefinitely once issued, but a server restart is a fine place to
 // draw that line, same as everything else in Room resetting on restart.

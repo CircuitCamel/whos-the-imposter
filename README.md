@@ -16,7 +16,7 @@ go build -o imposter ./cmd/imposter
 It prints the two URLs on startup:
 
 ```
-  topics loaded   50
+  topics loaded   1914
 
   players join    http://192.168.1.42:8080
   shared screen   http://192.168.1.42:8080/host
@@ -99,7 +99,7 @@ Flags:
 | flag | default | what it does |
 |---|---|---|
 | `-addr` | `:8080` | listen address |
-| `-topics` | `topics.csv` | path to the topic list |
+| `-topics` | `topics.json` | path to the topic list |
 | `-grace` | `90s` | how long a disconnected player keeps their seat |
 | `-domain` | *(LAN IP)* | public address for the join URL and QR code, e.g. `party.example.com` - set this if the game's behind a domain instead of joined by LAN IP |
 | `-min-players` | `2` | fewest connected players needed to deal a round |
@@ -123,18 +123,24 @@ go test ./...   # ring properties over ~2,800 random rounds, plus auth, scoring,
 
 ## Topics
 
-`topics.csv` is two columns - the topic everyone sees, and the hint word the
-imposter gets instead. A `topic,hint` header row is optional.
+`topics.json` is a flat array of objects - the topic everyone sees, the hint
+word the imposter gets instead, and a category tag:
 
-```csv
-topic,hint
-Military Base,Orders
-Ski Resort,Cold
+```json
+[
+    { "c": "around_the_world", "w": "Military Base", "h": "Orders" },
+    { "c": "sports_and_leisure", "w": "Ski Resort", "h": "Cold" }
+]
 ```
 
-Rows missing either column are skipped rather than crashing the server, so a
-trailing newline is fine. The file is read once at startup - restart to pick up
+`c` (category) isn't used by the game yet - every entry is pooled together
+regardless of category. Entries missing `w` or `h` are skipped rather than
+crashing the server. The file is read once at startup - restart to pick up
 edits.
+
+`topics.json` itself is gitignored - it's your own word list. Copy
+`topics.json.example` (five sample entries) to `topics.json` to get started,
+then add as many entries as you want.
 
 ## How a round goes
 

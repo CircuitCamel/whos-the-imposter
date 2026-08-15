@@ -26,7 +26,7 @@ func main() {
 	}
 
 	addr := flag.String("addr", ":"+config.EnvOr("IMPOSTER_PORT", "8080"), "address to listen on")
-	topicsPath := flag.String("topics", config.EnvOr("IMPOSTER_TOPICS", "topics.csv"), "path to the topics CSV (topic,hint)")
+	topicsPath := flag.String("topics", config.EnvOr("IMPOSTER_TOPICS", "topics.json"), "path to the topics JSON file ([{c,w,h}, ...])")
 	grace := flag.Duration("grace", graceDefault, "how long a disconnected player keeps their seat")
 	domain := flag.String("domain", config.EnvOr("IMPOSTER_DOMAIN", ""),
 		"public address players should use to join, e.g. party.example.com — overrides the LAN IP normally printed and put in the QR code")
